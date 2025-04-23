@@ -544,12 +544,8 @@ void PatternTransformer::applySwingFeel(std::vector<Note>& notes) {
     }
 }
 
-std::vector<Note> PatternTransformer::applyRhythmPattern(
-    const std::vector<Note>& input,
-    RhythmPattern pattern)
+std::vector<Note> PatternTransformer::applyRhythmPattern(const std::vector<Note>& input, RhythmPattern pattern)
 {
-    std::vector<Note> result = input;
-    
     // Handle Latin patterns separately
     switch (pattern) {
         case RhythmPattern::Samba:
@@ -562,72 +558,54 @@ std::vector<Note> PatternTransformer::applyRhythmPattern(
             return applyMamboPattern(input);
         case RhythmPattern::ChaCha:
             return applyChaChaPattern(input);
-        case RhythmPattern::Tango:
-            return applyTangoPattern(input);
-        case RhythmPattern::Salsa:
-            return applySalsaPattern(input);
-        case RhythmPattern::Clave23:
-            return applyClavePattern(input, false);
-        case RhythmPattern::Clave32:
-            return applyClavePattern(input, true);
         default:
-            // Handle existing patterns as before
-            return applyBasicRhythmPattern(input, pattern);
+            // Apply basic rhythm pattern
+            std::vector<Note> result = input;
+            double currentTime = 0.0;
+            
+            for (size_t i = 0; i < result.size(); ++i) {
+                // Calculate duration based on pattern
+                double duration = calculateNoteDuration(i, pattern);
+                
+                // Apply the duration and update timing
+                result[i].startTime = currentTime;
+                result[i].duration = duration;
+                
+                // Apply accents based on pattern position
+                switch (pattern) {
+                    case RhythmPattern::Regular:
+                        result[i].accent = (i % 4 == 0) ? 1 : 0; // Accent every 4th note
+                        break;
+                    case RhythmPattern::Dotted:
+                        result[i].accent = (i % 2 == 0) ? 1 : 0; // Accent the dotted note
+                        break;
+                    case RhythmPattern::Swing:
+                        result[i].accent = (i % 2 == 0) ? 1 : 0; // Accent the swing
+                        break;
+                    case RhythmPattern::Syncopated:
+                        result[i].accent = (i % 3 == 0) ? 1 : 0; // Accent every third note
+                        break;
+                    case RhythmPattern::Random: {
+                        std::uniform_int_distribution<> accentDist(0, 2);
+                        result[i].accent = accentDist(rng);
+                        break;
+                    }
+                    default:
+                        result[i].accent = 0;
+                        break;
+                }
+                
+                // Update timing for next note
+                currentTime += duration;
+            }
+            
+            // Apply swing feel if needed
+            if (pattern == RhythmPattern::Swing) {
+                applySwingFeel(result);
+            }
+            
+            return result;
     }
-}
-
-std::vector<Note> PatternTransformer::applyBasicRhythmPattern(
-    const std::vector<Note>& input,
-    RhythmPattern pattern)
-{
-    std::vector<Note> result = input;
-    double currentTime = 0.0;
-    
-    for (size_t i = 0; i < result.size(); ++i) {
-        // Calculate duration based on pattern
-        double duration = calculateNoteDuration(i, pattern);
-        
-        // Apply the duration and update timing
-        result[i].startTime = currentTime;
-        result[i].duration = duration;
-        
-        // Apply accents based on pattern position
-        switch (pattern) {
-            case RhythmPattern::Regular:
-                result[i].accent = (i % 4 == 0) ? 1 : 0; // Accent every 4th note
-                break;
-            case RhythmPattern::LongShort:
-            case RhythmPattern::ShortLong:
-                result[i].accent = (i % 2 == 0) ? 1 : 0; // Accent every other note
-                break;
-            case RhythmPattern::LongShortShort:
-            case RhythmPattern::ShortShortLong:
-                result[i].accent = (i % 3 == 0) ? 1 : 0; // Accent every third note
-                break;
-            case RhythmPattern::DottedEighth:
-                result[i].accent = (i % 2 == 0) ? 1 : 0; // Accent the dotted eighth
-                break;
-            case RhythmPattern::Triplet:
-                result[i].accent = (i % 3 == 0) ? 1 : 0; // Accent first of each triplet
-                break;
-            case RhythmPattern::Swing:
-                result[i].accent = (i % 2 == 0) ? 1 : 0; // Accent the swing
-                break;
-            default:
-                result[i].accent = 0;
-                break;
-        }
-        
-        // Update timing for next note
-        currentTime += duration;
-    }
-    
-    // Apply swing feel if needed
-    if (pattern == RhythmPattern::Swing) {
-        applySwingFeel(result);
-    }
-    
-    return result;
 }
 
 // Latin pattern implementations
@@ -722,29 +700,6 @@ std::vector<PatternTransformer::RhythmStep> PatternTransformer::createSyncopated
         steps.push_back(step);
     }
     return steps;
-}
-
-std::vector<Note> PatternTransformer::applyRhythmSteps(
-    const std::vector<Note>& input,
-    const std::vector<RhythmStep>& steps)
-{
-    std::vector<Note> result;
-    double currentTime = 0.0;
-    size_t inputIndex = 0;
-    
-    for (const auto& step : steps) {
-        if (!step.isRest && inputIndex < input.size()) {
-            Note newNote = input[inputIndex++];
-            newNote.startTime = currentTime;
-            newNote.duration = step.duration;
-            newNote.accent = step.accent;
-            newNote.velocity = 64 + (step.accent * 32); // Base velocity + accent boost
-            result.push_back(newNote);
-        }
-        currentTime += step.duration;
-    }
-    
-    return result;
 }
 
 std::vector<Note> PatternTransformer::applyArticulation(

@@ -1,18 +1,24 @@
 #pragma once
 
-#include <JuceHeader.h>
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>
+#include <juce_core/juce_core.h>
+#include <juce_data_structures/juce_data_structures.h>
+#include <juce_events/juce_events.h>
+#include <juce_graphics/juce_graphics.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_gui_extra/juce_gui_extra.h>
 #include "PluginProcessor.h"
 #include "PatternTransformer.h"
 
 // New struct to hold sequence metadata
-struct SequenceInfo {
-    Pattern pattern;
-    String name;
-    String trackName;
-    int trackIndex;
-    RhythmPattern rhythmType;
-    ArticulationStyle articulationType;
-    Time lastModified;
+struct SequenceMetadata {
+    juce::String name;
+    juce::String trackName;
+    int length;
+    double tempo;
+    juce::Time lastModified;
+    std::vector<Note> notes;
 };
 
 // New component for sequence browser
@@ -32,12 +38,12 @@ public:
     void paintCell(juce::Graphics&, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
     
     // Sequence management
-    void addSequence(const SequenceInfo& sequence);
+    void addSequence(const SequenceMetadata& sequence);
     void refreshSequences();
-    SequenceInfo getSelectedSequence() const;
+    SequenceMetadata getSelectedSequence() const;
     
     // Callback when sequence is selected
-    std::function<void(const SequenceInfo&)> onSequenceSelected;
+    std::function<void(const SequenceMetadata&)> onSequenceSelected;
     
 private:
     juce::TableListBox sequenceList;
@@ -46,7 +52,7 @@ private:
     juce::Label filterLabel;
     juce::TextEditor filterEdit;
     
-    std::vector<SequenceInfo> sequences;
+    std::vector<SequenceMetadata> sequences;
     int selectedRow = -1;
     
     enum ColumnIds {
@@ -67,11 +73,11 @@ public:
     void paint(juce::Graphics& g) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
-    void setPattern(const Pattern& pattern);
-    Pattern getPattern() const;
+    void setPattern(const SequenceMetadata& pattern);
+    SequenceMetadata getPattern() const;
 
 private:
-    Pattern currentPattern;
+    SequenceMetadata currentPattern;
     int gridSize = 16;
     float cellWidth = 30;
     float cellHeight = 20;
@@ -130,14 +136,15 @@ private:
 class GrooveSequencerAudioProcessorEditor : public juce::AudioProcessorEditor
 {
 public:
-    explicit GrooveSequencerAudioProcessorEditor(GrooveSequencerAudioProcessor&);
+    GrooveSequencerAudioProcessorEditor(GrooveSequencerAudioProcessor&);
     ~GrooveSequencerAudioProcessorEditor() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
-    GrooveSequencerAudioProcessor& processorRef;
+    GrooveSequencerAudioProcessor& audioProcessor;
+    PatternTransformer patternTransformer;
     
     // Main UI Components
     GridSequenceComponent sequenceGrid;
@@ -164,10 +171,10 @@ private:
     void updatePatternDisplay();
     
     // New methods for sequence browser
-    void handleSequenceSelected(const SequenceInfo& sequence);
+    void handleSequenceSelected(const SequenceMetadata& sequence);
     void importSelectedSequence();
     void scanForSequences();
-    void createSequenceVariant(const SequenceInfo& source, 
+    void createSequenceVariant(const SequenceMetadata& source, 
                              ArticulationStyle newStyle,
                              RhythmPattern newPattern);
 
