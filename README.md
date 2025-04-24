@@ -1,109 +1,67 @@
 # GrooveSequencer
 
-A C++ library for musical pattern generation and transformation. This library provides tools for creating, manipulating, and transforming musical patterns with support for various rhythm styles and articulations.
+A modern MIDI groove sequencer plugin with an Olivetti-inspired modernist interface. Built with JUCE framework.
 
 ## Features
 
-- Pattern generation and transformation
-- Support for multiple rhythm patterns:
-  - Basic patterns (Regular, Long-Short, Short-Long, etc.)
-  - Latin patterns (Samba, Bossa Nova, Rumba, etc.)
-  - Clave patterns (2-3 and 3-2)
-- Articulation styles (Legato, Staccato, Mixed)
-- Musical transformations:
-  - Step-wise movement
-  - Arpeggiation
-  - Inversion
-  - Retrograde
-  - Random patterns (Free and In-Key)
-- Swing feel support
-- Scale-aware transformations
+- 16x4 grid sequencer with velocity and accent control
+- Modernist UI design inspired by Olivetti aesthetics
+- Multiple articulation modes (Legato, Staccato, Mixed, Pattern)
+- Flexible grid size options (1/4, 1/8, 1/16, 1/32 with triplet and dotted variations)
+- Swing control
+- Velocity scaling
+- Gate length control
+- DAW sync support
+- Pattern transformation capabilities
 
-## Building the Project
+## Building
 
 ### Prerequisites
 
-- CMake 3.12 or higher
+- JUCE 7.0.0 or later
 - C++17 compatible compiler
+- CMake 3.15 or later
 
 ### Build Instructions
 
-1. Create a build directory:
+1. Clone the repository:
 ```bash
-mkdir build
-cd build
+git clone https://github.com/yourusername/GrooveSequencer.git
+cd GrooveSequencer
 ```
 
-2. Configure with CMake:
+2. Generate project files using CMake:
 ```bash
-cmake ..
+cmake -B Builds
 ```
 
-3. Build:
+3. Build the project:
 ```bash
-cmake --build .
+cmake --build Builds
 ```
 
-### Optional: Building Tests
+## Usage
 
-To build with tests enabled:
-```bash
-cmake -DBUILD_TESTS=ON ..
-cmake --build .
-```
+The plugin can be loaded in any DAW that supports VST3, AU, or AAX formats. The main interface consists of:
 
-## Project Structure
+- Transport controls (Play/Stop, Tempo, DAW Sync)
+- Grid size selector with triplet and dotted note options
+- Articulation selector
+- Grid controls (Swing, Velocity Scale, Gate Length)
+- 16x4 sequencer grid with velocity and accent control
 
-- `Source/` - Source files
-  - `PatternTransformer.h` - Main pattern transformation header
-  - `PatternTransformer.cpp` - Implementation file
-- `Tests/` - Test files (when implemented)
-- `CMakeLists.txt` - CMake build configuration
-- `README.md` - This file
+### Grid Interaction
 
-## Usage Example
-
-```cpp
-#include "PatternTransformer.h"
-
-// Create a transformer
-PatternTransformer transformer;
-
-// Set up a C major scale
-Scale cMajor;
-cMajor.root = 60; // Middle C
-cMajor.intervals = {0, 2, 4, 5, 7, 9, 11}; // Major scale intervals
-transformer.setScale(cMajor);
-
-// Create seed notes
-std::vector<Note> seeds = {
-    {60, 100, 0.0, 0.25}, // C4
-    {64, 100, 0.25, 0.25}, // E4
-    {67, 100, 0.5, 0.25}, // G4
-};
-transformer.setSeedNotes(seeds);
-
-// Generate a pattern
-Pattern pattern = transformer.generatePatternWithRhythm(
-    TransformationType::Arch,
-    RhythmPattern::Samba,
-    ArticulationStyle::Mixed,
-    16 // length
-);
-```
-
-## Future Development
-
-- Add more rhythm patterns
-- Implement pattern combination and layering
-- Add MIDI file import/export
-- Add real-time pattern generation
-- Implement more complex transformation algorithms
+- Left click: Toggle step on/off
+- Vertical drag: Adjust velocity
+- Right click: Cycle through accent levels
+- Alt + click: Toggle staccato
 
 ## License
 
-[Your chosen license]
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Contributing
+## Acknowledgments
 
-[Your contribution guidelines] 
+- UI design inspired by Olivetti's modernist aesthetic
+- Built with the JUCE framework 

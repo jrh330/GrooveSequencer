@@ -295,20 +295,18 @@ std::vector<Note> PatternTransformer::applyArch(const std::vector<Note>& input) 
     
     // Determine if we're in ascending or descending phase
     bool ascending = true;
-    int peakHeight = 7; // Maximum steps up before descending
-    
     if (input.size() >= 2) {
         Note secondLastNote = input[input.size() - 2];
-        if (lastNote.pitch < secondLastNote.pitch) {
-            ascending = false;
+        if (lastNote.pitch > secondLastNote.pitch && lastNote.pitch >= input[0].pitch + 12) {
+            ascending = false; // Start descending if we've gone up an octave
+        } else if (lastNote.pitch < secondLastNote.pitch && lastNote.pitch <= input[0].pitch) {
+            ascending = true; // Start ascending if we've returned to start
+        } else {
+            ascending = lastNote.pitch >= secondLastNote.pitch;
         }
     }
     
-    if (ascending && lastNote.pitch >= input[0].pitch + (peakHeight * 2)) {
-        ascending = false;
-    }
-    
-    newNote.pitch = getNextScaleNote(lastNote.pitch, ascending ? 2 : -2);
+    newNote.pitch += ascending ? 2 : -2;
     newNote.startTime = lastNote.startTime + lastNote.duration;
     result.push_back(newNote);
     
@@ -320,23 +318,24 @@ std::vector<Note> PatternTransformer::applyPendulum(const std::vector<Note>& inp
     if (input.empty()) return result;
     
     Note lastNote = input.back();
-    int centralPitch = input[0].pitch; // Use first note as central tone
+    Note newNote = lastNote;
     
-    // Calculate current swing distance
-    int swingStep = (input.size() / 2) + 1; // Increases with each pair of notes
-    
-    // Alternate between central tone and ascending steps
-    if (lastNote.pitch == centralPitch) {
-        Note newNote = lastNote;
-        newNote.pitch = getNextScaleNote(centralPitch, swingStep);
-        newNote.startTime = lastNote.startTime + lastNote.duration;
-        result.push_back(newNote);
-    } else {
-        Note newNote = lastNote;
-        newNote.pitch = centralPitch;
-        newNote.startTime = lastNote.startTime + lastNote.duration;
-        result.push_back(newNote);
+    // Determine swing direction
+    bool swingRight = true;
+    if (input.size() >= 2) {
+        Note secondLastNote = input[input.size() - 2];
+        swingRight = lastNote.pitch <= secondLastNote.pitch;
     }
+    
+    // Alternate between root note and higher/lower notes
+    if (input.size() % 2 == 0) {
+        newNote.pitch = input[0].pitch; // Return to root
+    } else {
+        newNote.pitch = input[0].pitch + (swingRight ? 4 : -4); // Swing up or down
+    }
+    
+    newNote.startTime = lastNote.startTime + lastNote.duration;
+    result.push_back(newNote);
     
     return result;
 }
@@ -346,27 +345,26 @@ std::vector<Note> PatternTransformer::applyPowerChord(const std::vector<Note>& i
     if (input.empty()) return result;
     
     Note lastNote = input.back();
-    Note newNote = lastNote;
+    double nextStartTime = lastNote.startTime + lastNote.duration;
     
-    // Power chord intervals (root, fifth, octave)
-    static const std::vector<int> powerChordIntervals = {0, 7, 12};
+    // Create power chord (root + fifth)
+    Note rootNote = lastNote;
+    rootNote.startTime = nextStartTime;
+    Note fifthNote = rootNote;
+    fifthNote.pitch += 7; // Perfect fifth
     
-    // Cycle through power chord notes
-    int currentPosition = 0;
-    for (size_t i = 0; i < input.size(); i++) {
-        if (input[i].pitch == lastNote.pitch) {
-            currentPosition = (i % powerChordIntervals.size());
-            break;
-        }
-    }
-    
-    int nextPosition = (currentPosition + 1) % powerChordIntervals.size();
-    int basePitch = input[0].pitch; // Use first note as root
-    newNote.pitch = basePitch + powerChordIntervals[nextPosition];
-    newNote.startTime = lastNote.startTime + lastNote.duration;
-    result.push_back(newNote);
+    result.push_back(rootNote);
+    result.push_back(fifthNote);
     
     return result;
+}
+
+void PatternTransformer::setRandomParameters(const RandomParameters& params) {
+    randomParams = params;
+}
+
+RandomParameters PatternTransformer::getRandomParameters() const {
+    return randomParams;
 }
 
 std::vector<Note> PatternTransformer::applyRandomFree(const std::vector<Note>& input) {
@@ -376,12 +374,31 @@ std::vector<Note> PatternTransformer::applyRandomFree(const std::vector<Note>& i
     Note lastNote = input.back();
     Note newNote = lastNote;
     
-    // Generate random pitch between reasonable MIDI values (36-96)
-    std::uniform_int_distribution<> pitchDist(36, 96);
-    newNote.pitch = pitchDist(rng);
+    // Check for rest
+    std::uniform_real_distribution<double> probDist(0.0, 1.0);
+    if (probDist(rng) < randomParams.restProbability) {
+        newNote.isRest = true;
+    }
+    // Check for repeat
+    else if (probDist(rng) < randomParams.repeatProbability) {
+        // Keep the same pitch
+    }
+    else {
+        // Random pitch within configured range
+        std::uniform_int_distribution<int> pitchDist(
+            randomParams.minPitchOffset,
+            randomParams.maxPitchOffset
+        );
+        newNote.pitch += pitchDist(rng);
+        
+        // Check for octave jump
+        if (probDist(rng) < randomParams.octaveJumpProbability) {
+            newNote.pitch += (probDist(rng) < 0.5 ? -12 : 12);
+        }
+    }
+    
     newNote.startTime = lastNote.startTime + lastNote.duration;
     result.push_back(newNote);
-    
     return result;
 }
 
@@ -392,18 +409,31 @@ std::vector<Note> PatternTransformer::applyRandomInKey(const std::vector<Note>& 
     Note lastNote = input.back();
     Note newNote = lastNote;
     
-    // Choose random scale degree
-    std::uniform_int_distribution<> degDist(0, currentScale.intervals.size() - 1);
-    int scaleDegree = degDist(rng);
+    // Check for rest
+    std::uniform_real_distribution<double> probDist(0.0, 1.0);
+    if (probDist(rng) < randomParams.restProbability) {
+        newNote.isRest = true;
+    }
+    // Check for repeat
+    else if (probDist(rng) < randomParams.repeatProbability) {
+        // Keep the same pitch
+    }
+    else {
+        // Random step within configured scale range
+        std::uniform_int_distribution<int> stepDist(
+            randomParams.minScaleSteps,
+            randomParams.maxScaleSteps
+        );
+        newNote.pitch = getNextScaleNote(lastNote.pitch, stepDist(rng));
+        
+        // Check for octave jump
+        if (probDist(rng) < randomParams.octaveJumpProbability) {
+            newNote.pitch += (probDist(rng) < 0.5 ? -12 : 12);
+        }
+    }
     
-    // Choose random octave between 3 and 6
-    std::uniform_int_distribution<> octDist(3, 6);
-    int octave = octDist(rng);
-    
-    newNote.pitch = (octave * 12) + currentScale.intervals[scaleDegree];
     newNote.startTime = lastNote.startTime + lastNote.duration;
     result.push_back(newNote);
-    
     return result;
 }
 
@@ -414,19 +444,21 @@ std::vector<Note> PatternTransformer::applyRandomRhythmic(const std::vector<Note
     Note lastNote = input.back();
     Note newNote = lastNote;
     
-    // Keep the rhythm (duration and timing) but randomize pitch in scale
-    std::uniform_int_distribution<> degDist(0, currentScale.intervals.size() - 1);
-    int scaleDegree = degDist(rng);
+    // Check for rest
+    std::uniform_real_distribution<double> probDist(0.0, 1.0);
+    if (probDist(rng) < randomParams.restProbability) {
+        newNote.isRest = true;
+    }
     
-    // Stay within 2 octaves of the original pitch
-    int baseOctave = lastNote.pitch / 12;
-    std::uniform_int_distribution<> octDist(baseOctave - 1, baseOctave + 1);
-    int octave = octDist(rng);
-    
-    newNote.pitch = (octave * 12) + currentScale.intervals[scaleDegree];
+    // Random duration variations within configured range
+    std::uniform_real_distribution<double> durationDist(
+        randomParams.minDurationMultiplier,
+        randomParams.maxDurationMultiplier
+    );
+    newNote.duration *= durationDist(rng);
     newNote.startTime = lastNote.startTime + lastNote.duration;
-    result.push_back(newNote);
     
+    result.push_back(newNote);
     return result;
 }
 
@@ -455,7 +487,7 @@ Pattern PatternTransformer::generatePatternWithRhythm(
     pattern.notes = applyRhythmPattern(pattern.notes, rhythm);
     
     // Apply articulation
-    applyArticulation(pattern.notes, articulation);
+    pattern.notes = applyArticulationStyle(pattern.notes, articulation);
     
     // Set the grid size
     pattern.gridSize = currentGridSize;
@@ -556,12 +588,11 @@ std::vector<Note> PatternTransformer::applyRhythmSteps(
         if (!step.isRest && inputIndex < input.size()) {
             Note newNote = input[inputIndex++];
             newNote.startTime = currentTime;
-            newNote.duration = step.duration;
-            newNote.accent = step.accent;
-            newNote.velocity = 64 + (step.accent * 32); // Base velocity + accent boost
+            newNote.duration = step.duration * currentGridSize;
+            newNote.velocity = 64 + (step.accent * 21); // Base velocity + accent boost (0, 21, or 42)
             result.push_back(newNote);
         }
-        currentTime += step.duration;
+        currentTime += step.duration * currentGridSize;
     }
     
     return result;
@@ -574,22 +605,60 @@ std::vector<RhythmStep> PatternTransformer::createSyncopatedPattern(
     std::vector<RhythmStep> steps;
     for (size_t i = 0; i < accents.size(); ++i) {
         RhythmStep step;
-        step.duration = durations[i] * currentGridSize;
+        step.duration = durations[i];
         step.accent = accents[i];
-        step.isRest = (accents[i] == 0);
+        step.isRest = (accents[i] == 0 && std::uniform_real_distribution<>(0.0, 1.0)(rng) < randomParams.restProbability);
         steps.push_back(step);
     }
     return steps;
+}
+
+Pattern PatternTransformer::applyRhythmAndArticulation(
+    const Pattern& source,
+    TransformationType type,
+    RhythmPattern rhythm,
+    ArticulationStyle articulation,
+    int length)
+{
+    // First apply the transformation
+    Pattern transformed = transformPattern(source, type);
+    
+    // Then apply rhythm pattern
+    std::vector<Note> rhythmicNotes = applyRhythmPattern(transformed.notes, rhythm);
+    
+    // Finally apply articulation
+    std::vector<Note> articulatedNotes = applyArticulationStyle(rhythmicNotes, articulation);
+    
+    // Create final pattern
+    Pattern result = transformed;
+    result.notes = articulatedNotes;
+    result.length = length;
+    
+    return result;
+}
+
+std::vector<Note> PatternTransformer::applyArticulationStyle(
+    const std::vector<Note>& input,
+    ArticulationStyle style)
+{
+    std::vector<Note> notes = input;
+    for (size_t i = 0; i < notes.size(); ++i) {
+        notes[i].isStaccato = shouldBeStaccato(i, style);
+        
+        if (notes[i].isStaccato) {
+            // For staccato, make the note shorter but keep the same start time
+            double originalDuration = notes[i].duration;
+            notes[i].duration = originalDuration * 0.5; // 50% of original duration
+        }
+    }
+    
+    return notes;
 }
 
 std::vector<Note> PatternTransformer::applyRhythmPattern(
     const std::vector<Note>& input,
     RhythmPattern pattern)
 {
-    std::vector<Note> result = input;
-    double currentTime = 0.0;
-    
-    // Create basic rhythm patterns
     std::vector<int> accents;
     std::vector<double> durations;
     
@@ -615,7 +684,6 @@ std::vector<Note> PatternTransformer::applyRhythmPattern(
             break;
             
         case RhythmPattern::Random: {
-            // Generate random accents and durations
             const int patternLength = 8;
             std::uniform_int_distribution<> accentDist(0, 2);
             std::uniform_real_distribution<> durationDist(0.5, 1.5);
@@ -628,61 +696,63 @@ std::vector<Note> PatternTransformer::applyRhythmPattern(
         }
             
         case RhythmPattern::Clave:
-            // 3-2 Son clave pattern
-            accents = {2, 0, 0, 2, 0, 0, 2, 0, 2, 0, 2, 0};
-            durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5};
+            if (isThreeTwoClave) {
+                accents = {2, 0, 0, 2, 0, 0, 2, 0, 2, 0, 2, 0};
+                durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5};
+            } else {
+                accents = {2, 0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 2};
+                durations = {1.0, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0};
+            }
             break;
     }
     
-    // Create and apply rhythm steps
     auto steps = createSyncopatedPattern(accents, durations);
     return applyRhythmSteps(input, steps);
 }
 
 std::vector<Note> PatternTransformer::applySambaPattern(const std::vector<Note>& input) {
-    // Samba basic pattern (2/4 time)
-    std::vector<int> accents = {2, 0, 1, 1, 0, 1, 2, 1};
-    std::vector<double> durations(8, 0.25); // Eight equal divisions
+    std::vector<Note> result = input;
+    std::vector<int> accents = {2, 0, 1, 0, 2, 0, 1, 0}; // 2 = strong, 1 = medium, 0 = weak
+    std::vector<double> durations = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
     
     auto steps = createSyncopatedPattern(accents, durations);
-    return applyRhythmSteps(input, steps);
+    return applyRhythmSteps(result, steps);
 }
 
 std::vector<Note> PatternTransformer::applyBossaNovaPattern(const std::vector<Note>& input) {
-    // Bossa Nova basic pattern
-    std::vector<int> accents = {2, 0, 1, 1, 0, 2, 1, 0};
-    std::vector<double> durations(8, 0.25);
+    std::vector<Note> result = input;
+    std::vector<int> accents = {2, 0, 1, 0, 1, 0, 2, 0}; // Bossa Nova accent pattern
+    std::vector<double> durations = {0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25};
     
     auto steps = createSyncopatedPattern(accents, durations);
-    return applyRhythmSteps(input, steps);
+    return applyRhythmSteps(result, steps);
 }
 
 std::vector<Note> PatternTransformer::applyRumbaPattern(const std::vector<Note>& input) {
-    // Rumba clave pattern
-    std::vector<int> accents = {2, 0, 1, 0, 1, 0, 1, 0, 2, 0, 1, 1, 0, 0, 1, 1};
-    std::vector<double> durations(16, 0.25);
+    std::vector<Note> result = input;
+    std::vector<int> accents = {2, 0, 1, 2, 0, 1, 0, 2}; // Rumba accent pattern
+    std::vector<double> durations = {0.75, 0.25, 0.5, 0.5, 0.5, 0.25, 0.25, 0.5};
     
     auto steps = createSyncopatedPattern(accents, durations);
-    return applyRhythmSteps(input, steps);
+    return applyRhythmSteps(result, steps);
 }
 
 std::vector<Note> PatternTransformer::applyMamboPattern(const std::vector<Note>& input) {
-    // Mambo basic pattern
-    std::vector<int> accents = {2, 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1, 2, 0, 1, 1};
-    std::vector<double> durations(16, 0.25);
+    std::vector<Note> result = input;
+    std::vector<int> accents = {2, 1, 0, 2, 1, 0, 2, 0}; // Mambo accent pattern
+    std::vector<double> durations = {0.5, 0.25, 0.25, 0.5, 0.25, 0.25, 0.5, 0.5};
     
     auto steps = createSyncopatedPattern(accents, durations);
-    return applyRhythmSteps(input, steps);
+    return applyRhythmSteps(result, steps);
 }
 
 std::vector<Note> PatternTransformer::applyChaChaPattern(const std::vector<Note>& input) {
-    // Cha-cha-cha pattern
-    std::vector<int> accents = {2, 0, 0, 1, 2, 0, 0, 2, 2, 0, 2, 0, 2, 0, 0, 1};
-    std::vector<double> durations = {0.375, 0.125, 0.25, 0.25, 0.375, 0.125, 0.25, 0.25,
-                                   0.375, 0.125, 0.25, 0.25, 0.375, 0.125, 0.25, 0.25};
+    std::vector<Note> result = input;
+    std::vector<int> accents = {2, 0, 1, 0, 2, 0, 1, 0}; // Cha-cha accent pattern
+    std::vector<double> durations = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
     
     auto steps = createSyncopatedPattern(accents, durations);
-    return applyRhythmSteps(input, steps);
+    return applyRhythmSteps(result, steps);
 }
 
 std::vector<Note> PatternTransformer::applyClavePattern(const std::vector<Note>& input, bool isThreeTwo) {
@@ -702,24 +772,4 @@ std::vector<Note> PatternTransformer::applyClavePattern(const std::vector<Note>&
     std::vector<double> durations(16, 0.25); // 16 sixteenth notes
     auto steps = createSyncopatedPattern(accents, durations);
     return applyRhythmSteps(input, steps);
-}
-
-std::vector<Note> PatternTransformer::applyArticulation(
-    std::vector<Note>& notes,
-    ArticulationStyle style)
-{
-    for (size_t i = 0; i < notes.size(); ++i) {
-        notes[i].isStaccato = shouldBeStaccato(i, style);
-        
-        if (notes[i].isStaccato) {
-            // For staccato, make the note shorter but keep the same start time
-            double originalDuration = notes[i].duration;
-            notes[i].duration = originalDuration * 0.5; // 50% of original duration
-            
-            // The remaining time becomes a rest
-            // (we don't need to explicitly represent the rest)
-        }
-    }
-    
-    return notes;
 } 

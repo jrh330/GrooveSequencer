@@ -1,3 +1,4 @@
+#include <JuceHeader.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
@@ -281,154 +282,292 @@ SequenceInfo SequenceBrowserComponent::getSelectedSequence() const
 //==============================================================================
 GrooveSequencerAudioProcessorEditor::GrooveSequencerAudioProcessorEditor(GrooveSequencerAudioProcessor& p)
     : AudioProcessorEditor(&p)
-    , processorRef(p)
-    , mainTabs(juce::TabbedComponent::TabsAtTop)
+    , processor(p)
+    , gridSequencer(p)
 {
+    // Apply custom look and feel
+    lookAndFeel = std::make_unique<GrooveSequencerLookAndFeel>();
+    setLookAndFeel(lookAndFeel.get());
+    
+    // Set background color
+    setOpaque(true);
+    
+    // Set up transport controls
+    setupTransportControls();
+    
+    // Set up grid size controls
+    setupGridSizeControls();
+    
+    // Set up grid controls
+    setupGridControls();
+    
+    // Set up articulation controls
+    setupArticulationControls();
+    
+    // Add child components
+    addAndMakeVisible(gridSequencer);
+    addAndMakeVisible(playButton);
+    addAndMakeVisible(stopButton);
+    addAndMakeVisible(tempoSlider);
+    addAndMakeVisible(tempoLabel);
+    addAndMakeVisible(syncButton);
+    addAndMakeVisible(gridSizeSelector);
+    addAndMakeVisible(gridSizeLabel);
+    addAndMakeVisible(tripletButton);
+    addAndMakeVisible(dottedButton);
+    addAndMakeVisible(swingSlider);
+    addAndMakeVisible(swingLabel);
+    addAndMakeVisible(velocityScaleSlider);
+    addAndMakeVisible(velocityScaleLabel);
+    addAndMakeVisible(gateLengthSlider);
+    addAndMakeVisible(gateLengthLabel);
+    addAndMakeVisible(articulationLabel);
+    addAndMakeVisible(articulationSelector);
+    
+    // Set initial size
     setSize(800, 600);
-    
-    // Setup tabs
-    addAndMakeVisible(mainTabs);
-    
-    // Create main editor panel
-    auto* editorPanel = new Component();
-    editorPanel->addAndMakeVisible(sequenceGrid);
-    editorPanel->addAndMakeVisible(patternPresets);
-    editorPanel->addAndMakeVisible(transformControls);
-    editorPanel->addAndMakeVisible(playbackControls);
-    editorPanel->addAndMakeVisible(humanizeSlider);
-    editorPanel->addAndMakeVisible(gridSizeSelector);
-    editorPanel->addAndMakeVisible(savePatternButton);
-    editorPanel->addAndMakeVisible(loadPatternButton);
-    
-    // Add tabs
-    mainTabs.addTab("Editor", juce::Colours::grey, editorPanel, true);
-    mainTabs.addTab("Sequence Browser", juce::Colours::grey, &sequenceBrowser, true);
-    
-    // Setup sequence browser callbacks
-    sequenceBrowser.onSequenceSelected = [this](const SequenceInfo& sequence)
-    {
-        handleSequenceSelected(sequence);
-    };
-    
-    // Setup callbacks
-    patternPresets.onPatternSelected = [this](RhythmPattern pattern)
-    {
-        handlePatternSelected(pattern);
-    };
-    
-    transformControls.onTransformationSelected = [this](TransformationType type)
-    {
-        handleTransformationSelected(type);
-    };
-    
-    playbackControls.onPlay = [this]()
-    {
-        processorRef.startPlayback();
-    };
-    
-    playbackControls.onStop = [this]()
-    {
-        processorRef.stopPlayback();
-    };
 }
 
 GrooveSequencerAudioProcessorEditor::~GrooveSequencerAudioProcessorEditor()
 {
+    setLookAndFeel(nullptr);
 }
 
-void GrooveSequencerAudioProcessorEditor::paint(juce::Graphics& g)
+void GrooveSequencerAudioProcessorEditor::setupTransportControls()
 {
-    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+    // Play button
+    playButton.setButtonText("Play");
+    playButton.onClick = [this]() { processor.startPlayback(); };
+    
+    // Stop button
+    stopButton.setButtonText("Stop");
+    stopButton.onClick = [this]() { processor.stopPlayback(); };
+    
+    // Tempo slider
+    tempoLabel.setText("Tempo", juce::dontSendNotification);
+    tempoSlider.setRange(40.0, 240.0, 1.0);
+    tempoSlider.setValue(processor.getCurrentPattern().tempo);
+    tempoSlider.setTextValueSuffix(" BPM");
+    tempoSlider.onValueChange = [this]() {
+        processor.setTempo(tempoSlider.getValue());
+    };
+    
+    // Sync button
+    syncButton.setButtonText("Sync to DAW");
+    syncButton.onClick = [this]() {
+        bool shouldSync = syncButton.getToggleState();
+        processor.setSyncToHost(shouldSync);
+        tempoSlider.setEnabled(!shouldSync);
+    };
+}
+
+void GrooveSequencerAudioProcessorEditor::setupGridSizeControls()
+{
+    // Grid size selector
+    gridSizeLabel.setText("Grid", juce::dontSendNotification);
+    
+    gridSizeSelector.addItem("1/4", 1);
+    gridSizeSelector.addItem("1/8", 2);
+    gridSizeSelector.addItem("1/16", 3);
+    gridSizeSelector.addItem("1/32", 4);
+    gridSizeSelector.setSelectedId(3); // Default to 1/16
+    
+    gridSizeSelector.onChange = [this]() {
+        updateGridSize();
+    };
+    
+    // Triplet button
+    tripletButton.setButtonText("Triplet");
+    tripletButton.onClick = [this]() {
+        updateGridSize();
+    };
+    
+    // Dotted button
+    dottedButton.setButtonText("Dotted");
+    dottedButton.onClick = [this]() {
+        if (dottedButton.getToggleState())
+            tripletButton.setToggleState(false, juce::dontSendNotification);
+        updateGridSize();
+    };
+    
+    // Make triplet and dotted mutually exclusive
+    tripletButton.onClick = [this]() {
+        if (tripletButton.getToggleState())
+            dottedButton.setToggleState(false, juce::dontSendNotification);
+        updateGridSize();
+    };
+}
+
+void GrooveSequencerAudioProcessorEditor::updateGridSize()
+{
+    double baseSize = 1.0;
+    switch (gridSizeSelector.getSelectedId())
+    {
+        case 1: baseSize = 1.0; break;     // 1/4
+        case 2: baseSize = 0.5; break;     // 1/8
+        case 3: baseSize = 0.25; break;    // 1/16
+        case 4: baseSize = 0.125; break;   // 1/32
+    }
+    
+    if (tripletButton.getToggleState())
+        baseSize *= 2.0/3.0;
+    else if (dottedButton.getToggleState())
+        baseSize *= 1.5;
+    
+    processor.setGridSize(baseSize);
+}
+
+void GrooveSequencerAudioProcessorEditor::setupGridControls()
+{
+    // Swing control
+    swingLabel.setText("Swing", juce::dontSendNotification);
+    swingSlider.setRange(0.0, 1.0, 0.01);
+    swingSlider.setTextValueSuffix("%");
+    swingSlider.onValueChange = [this]() {
+        processor.setSwingAmount(swingSlider.getValue());
+    };
+    
+    // Velocity scale control
+    velocityScaleLabel.setText("Velocity", juce::dontSendNotification);
+    velocityScaleSlider.setRange(0.0, 2.0, 0.01);
+    velocityScaleSlider.setValue(1.0);
+    velocityScaleSlider.onValueChange = [this]() {
+        processor.setVelocityScale(velocityScaleSlider.getValue());
+    };
+    
+    // Gate length control
+    gateLengthLabel.setText("Gate", juce::dontSendNotification);
+    gateLengthSlider.setRange(0.1, 1.0, 0.01);
+    gateLengthSlider.setValue(0.8);
+    gateLengthSlider.setTextValueSuffix("%");
+    gateLengthSlider.onValueChange = [this]() {
+        processor.setGateLength(gateLengthSlider.getValue());
+    };
+}
+
+void GrooveSequencerAudioProcessorEditor::setupArticulationControls()
+{
+    articulationLabel.setText("Articulation", juce::dontSendNotification);
+    
+    articulationSelector.addItem("Legato", 1);
+    articulationSelector.addItem("Staccato", 2);
+    articulationSelector.addItem("Mixed", 3);
+    articulationSelector.addItem("Pattern", 4);
+    articulationSelector.setSelectedId(1); // Default to Legato
+    
+    articulationSelector.onChange = [this]() {
+        auto style = static_cast<ArticulationStyle>(articulationSelector.getSelectedId() - 1);
+        processor.setArticulationStyle(style);
+    };
 }
 
 void GrooveSequencerAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds();
-    mainTabs.setBounds(area);
+    const int margin = 8;
+    const int topHeight = 100;
+    const int rightWidth = 200;
     
-    if (auto* editorPanel = dynamic_cast<Component*>(mainTabs.getTabContentComponent(0)))
-    {
-        // Layout for editor panel
-        auto editorArea = editorPanel->getLocalBounds();
-        
-        // Top controls
-        auto topControls = editorArea.removeFromTop(120);
-        auto row = topControls.removeFromTop(40);
-        patternPresets.setBounds(row);
-        
-        row = topControls.removeFromTop(40);
-        transformControls.setBounds(row);
-        
-        row = topControls.removeFromTop(40);
-        playbackControls.setBounds(row);
-        
-        // Main sequence grid
-        sequenceGrid.setBounds(editorArea.removeFromTop(320));
-        
-        // Bottom controls
-        auto bottomControls = editorArea.removeFromBottom(40);
-        humanizeSlider.setBounds(bottomControls.removeFromLeft(200));
-        gridSizeSelector.setBounds(bottomControls.removeFromLeft(100));
-        savePatternButton.setBounds(bottomControls.removeFromLeft(100));
-        loadPatternButton.setBounds(bottomControls.removeFromLeft(100));
-    }
+    // Top section split into two rows
+    auto topSection = area.removeFromTop(topHeight);
+    
+    // Transport section (top left)
+    auto transportArea = topSection.removeFromLeft(topSection.getWidth() - rightWidth);
+    auto transportRow1 = transportArea.removeFromTop(45);
+    auto transportRow2 = transportArea.removeFromTop(45);
+    
+    // Transport Row 1: Play/Stop and Tempo
+    playButton.setBounds(transportRow1.removeFromLeft(80).reduced(margin));
+    stopButton.setBounds(transportRow1.removeFromLeft(80).reduced(margin));
+    transportRow1.removeFromLeft(margin * 2); // Spacing
+    
+    auto tempoArea = transportRow1.removeFromLeft(250);
+    tempoLabel.setBounds(tempoArea.removeFromLeft(50).reduced(margin));
+    tempoSlider.setBounds(tempoArea.reduced(margin));
+    syncButton.setBounds(transportRow1.removeFromLeft(100).reduced(margin));
+    
+    // Transport Row 2: Grid Size and Articulation Controls
+    auto leftControls = transportRow2.removeFromLeft(transportRow2.getWidth() / 2);
+    auto rightControls = transportRow2;
+    
+    // Grid Size Controls (left)
+    gridSizeLabel.setBounds(leftControls.removeFromLeft(40).reduced(margin));
+    gridSizeSelector.setBounds(leftControls.removeFromLeft(100).reduced(margin));
+    leftControls.removeFromLeft(margin * 2); // Spacing
+    
+    auto modifierArea = leftControls.removeFromLeft(200);
+    tripletButton.setBounds(modifierArea.removeFromLeft(95).reduced(margin));
+    dottedButton.setBounds(modifierArea.reduced(margin));
+    
+    // Articulation Controls (right)
+    articulationLabel.setBounds(rightControls.removeFromLeft(70).reduced(margin));
+    articulationSelector.setBounds(rightControls.reduced(margin));
+    
+    // Right side controls
+    auto rightSection = area.removeFromRight(rightWidth);
+    
+    // Draw modernist separator
+    auto separatorArea = area.removeFromRight(margin * 2);
+    
+    // Control sections with modernist spacing
+    auto controlHeight = 90;
+    auto controlSpacing = margin * 2;
+    
+    // Swing controls
+    auto swingArea = rightSection.removeFromTop(controlHeight);
+    swingLabel.setBounds(swingArea.removeFromTop(25).reduced(margin));
+    swingSlider.setBounds(swingArea.reduced(margin));
+    rightSection.removeFromTop(controlSpacing);
+    
+    // Velocity controls
+    auto velocityArea = rightSection.removeFromTop(controlHeight);
+    velocityScaleLabel.setBounds(velocityArea.removeFromTop(25).reduced(margin));
+    velocityScaleSlider.setBounds(velocityArea.reduced(margin));
+    rightSection.removeFromTop(controlSpacing);
+    
+    // Gate controls
+    auto gateArea = rightSection.removeFromTop(controlHeight);
+    gateLengthLabel.setBounds(gateArea.removeFromTop(25).reduced(margin));
+    gateLengthSlider.setBounds(gateArea.reduced(margin));
+    
+    // Main grid area with modernist margins
+    gridSequencer.setBounds(area.reduced(margin * 2));
 }
 
-void GrooveSequencerAudioProcessorEditor::handlePatternSelected(RhythmPattern pattern)
+void GrooveSequencerAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    processorRef.setCurrentPattern(pattern);
-    updatePatternDisplay();
-}
-
-void GrooveSequencerAudioProcessorEditor::handleTransformationSelected(TransformationType type)
-{
-    processorRef.setTransformation(type);
-    updatePatternDisplay();
-}
-
-void GrooveSequencerAudioProcessorEditor::updatePatternDisplay()
-{
-    auto pattern = processorRef.getCurrentPattern();
-    sequenceGrid.setPattern(pattern);
-    repaint();
-}
-
-void GrooveSequencerAudioProcessorEditor::handleSequenceSelected(const SequenceInfo& sequence)
-{
-    // Import the selected sequence
-    sequenceGrid.setPattern(sequence.pattern);
+    auto& lf = dynamic_cast<GrooveSequencerLookAndFeel&>(getLookAndFeel());
+    g.fillAll(lf.offWhite);
     
-    // Update controls to match the sequence
-    patternPresets.setSelectedPattern(sequence.rhythmType);
-    transformControls.setSelectedArticulation(sequence.articulationType);
+    auto bounds = getLocalBounds().toFloat();
     
-    // Switch to editor tab
-    mainTabs.setCurrentTabIndex(0);
+    // Draw modernist decorative elements
+    // Top section separator
+    g.setColour(lf.mint.withAlpha(0.2f));
+    g.drawLine(0, 100, bounds.getWidth(), 100, 2.0f);
     
-    updatePatternDisplay();
-}
-
-void GrooveSequencerAudioProcessorEditor::scanForSequences()
-{
-    // TODO: Scan the DAW for existing sequences in other tracks
-    // This will require integration with the host DAW's API
-}
-
-void GrooveSequencerAudioProcessorEditor::createSequenceVariant(
-    const SequenceInfo& source,
-    ArticulationStyle newStyle,
-    RhythmPattern newPattern)
-{
-    // Create a new sequence based on the source
-    SequenceInfo variant = source;
-    variant.name = source.name + " (Modified)";
-    variant.articulationType = newStyle;
-    variant.rhythmType = newPattern;
-    variant.lastModified = Time::getCurrentTime();
+    // Right section separator
+    float separatorX = bounds.getWidth() - 216;
+    g.setColour(lf.mint.withAlpha(0.1f));
+    g.drawLine(separatorX, 0, separatorX, bounds.getHeight(), 3.0f);
     
-    // Apply the new style and pattern
-    // TODO: Implement pattern and articulation transformation
+    // Draw geometric accents
+    float circleSize = 40.0f;
+    float margin = 8.0f;
     
-    // Add to browser
-    sequenceBrowser.addSequence(variant);
+    // Top left circle
+    lf.drawModernistCircle(g, 
+        juce::Rectangle<float>(margin, margin, circleSize, circleSize),
+        lf.yellow.withAlpha(0.2f));
+    
+    // Top right circle
+    lf.drawModernistCircle(g,
+        juce::Rectangle<float>(bounds.getWidth() - circleSize - margin, margin,
+                             circleSize, circleSize),
+        lf.red.withAlpha(0.2f));
+    
+    // Bottom decorative lines
+    g.setColour(lf.mint.withAlpha(0.1f));
+    float lineY = bounds.getHeight() - margin * 3;
+    g.drawLine(margin * 4, lineY, bounds.getWidth() - margin * 4, lineY, 2.0f);
 } 

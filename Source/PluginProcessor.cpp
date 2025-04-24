@@ -6,245 +6,344 @@ GrooveSequencerAudioProcessor::GrooveSequencerAudioProcessor()
     : AudioProcessor(BusesProperties()
         .withInput("Input", juce::AudioChannelSet::stereo(), true)
         .withOutput("Output", juce::AudioChannelSet::stereo(), true))
-    , currentSampleRate(0.0)
-    , currentPattern()
+    , currentStep(0)
+    , playing(false)
+    , sampleRate(44100.0)
     , tempo(120.0)
-    , isPlaying(false)
-    , currentBeat(0.0)
-    , samplesPerBeat(0.0)
+    , loopStartStep(0)
+    , loopEndStep(15)
+    , swingAmount(0.0)
+    , velocityScale(1.0)
+    , gateLength(0.8)
+    , lastNoteOnTimestamp(0)
 {
+    // Initialize default pattern
+    currentPattern.length = 16;
+    currentPattern.tempo = tempo;
+    currentPattern.gridSize = 0.25; // 16th notes
 }
 
 GrooveSequencerAudioProcessor::~GrooveSequencerAudioProcessor()
 {
+    stopAllNotes();
 }
 
-void GrooveSequencerAudioProcessor::prepareToPlay(double sampleRate, int /*samplesPerBlock*/)
+void GrooveSequencerAudioProcessor::prepareToPlay(double newSampleRate, int /*samplesPerBlock*/)
 {
-    currentSampleRate = sampleRate;
-    
-    // Calculate samples per beat based on tempo
-    samplesPerBeat = (sampleRate * 60.0) / tempo;
-    
-    // Clear any existing MIDI events
-    midiBuffer.clear();
-    
-    // Send program change for Marimba (GM instrument 13)
-    juce::MidiMessage programChange = juce::MidiMessage::programChange(1, 12); // 0-based index
-    midiBuffer.addEvent(programChange, 0);
+    sampleRate = newSampleRate;
+    currentStep = 0;
+    lastNoteOnTimestamp = 0;
+    stopAllNotes();
 }
 
 void GrooveSequencerAudioProcessor::releaseResources()
 {
-    // Release any resources when playback stops
-    midiBuffer.clear();
-    scheduledNotes.clear();
+    stopAllNotes();
 }
 
 void GrooveSequencerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
                                                juce::MidiBuffer& midiMessages)
 {
+    juce::ScopedNoDenormals noDenormals;
     buffer.clear();
-    midiMessages.clear();
-
-    // Calculate timing information
-    const double localSamplesPerBeat = (60.0 / currentPattern.tempo) * currentSampleRate;
-    const double samplesPerGridUnit = localSamplesPerBeat * currentPattern.gridSize;
     
-    // Process each note in the pattern
-    for (const auto& note : currentPattern.notes) {
-        // Calculate sample position for this note
-        const int samplePosition = static_cast<int>(note.startTime * samplesPerGridUnit);
-        
-        if (samplePosition >= 0 && samplePosition < buffer.getNumSamples()) {
-            // Calculate velocity with staccato adjustment
-            int velocity = static_cast<int>(note.isStaccato ? note.velocity * 0.8 : note.velocity);
-            velocity = juce::jlimit(1, 127, velocity + (note.accent * 20)); // Accent affects velocity
-            
-            // Create MIDI messages for note on and off
-            auto noteOn = juce::MidiMessage::noteOn(1, note.pitch, static_cast<uint8_t>(velocity));
-            midiMessages.addEvent(noteOn, samplePosition);
-            
-            // Calculate note off position based on duration
-            const int noteOffPosition = static_cast<int>((note.startTime + note.duration) * samplesPerGridUnit);
-            if (noteOffPosition < buffer.getNumSamples()) {
-                auto noteOff = juce::MidiMessage::noteOff(1, note.pitch);
-                midiMessages.addEvent(noteOff, noteOffPosition);
-            }
+    if (!playing) return;
+    
+    auto* playHead = getPlayHead();
+    if (playHead != nullptr)
+    {
+        auto positionInfo = playHead->getPosition();
+        if (positionInfo.hasValue())
+        {
+            updatePlaybackPosition(positionInfo.get());
+        }
+    }
+    
+    processNextStep();
+    
+    // Process any incoming MIDI
+    for (const auto metadata : midiMessages)
+    {
+        auto msg = metadata.getMessage();
+        if (msg.isNoteOn())
+        {
+            activeNotes.push_back(msg.getNoteNumber());
+        }
+        else if (msg.isNoteOff())
+        {
+            auto it = std::find(activeNotes.begin(), activeNotes.end(), msg.getNoteNumber());
+            if (it != activeNotes.end())
+                activeNotes.erase(it);
         }
     }
 }
 
-bool GrooveSequencerAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
+void GrooveSequencerAudioProcessor::processBlock(juce::AudioBuffer<double>& buffer,
+                                               juce::MidiBuffer& midiMessages)
 {
-    // Only support stereo
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-
-    return true;
+    juce::AudioBuffer<float> floatBuffer(buffer.getNumChannels(), buffer.getNumSamples());
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        floatBuffer.copyFrom(ch, 0, buffer.getReadPointer(ch), buffer.getNumSamples());
+    }
+    
+    processBlock(floatBuffer, midiMessages);
+    
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    {
+        buffer.copyFrom(ch, 0, floatBuffer.getReadPointer(ch), buffer.getNumSamples());
+    }
 }
 
-void GrooveSequencerAudioProcessor::processNextBlock(juce::MidiBuffer& midiMessages, int numSamples)
+void GrooveSequencerAudioProcessor::updatePlaybackPosition(juce::AudioPlayHead::PositionInfo& pos)
 {
-    const double samplesPerGridUnit = samplesPerBeat * currentPattern.gridSize;
-    const double startBeat = currentBeat;
-    const double endBeat = startBeat + (numSamples / samplesPerBeat);
+    const juce::ScopedLock sl(playbackLock);
     
-    // Process each note in the pattern
+    if (pos.getBpm().hasValue())
+        tempo = *pos.getBpm();
+        
+    if (pos.getPpqPosition().hasValue())
+    {
+        double ppqPerStep = currentPattern.gridSize;
+        double currentPpq = *pos.getPpqPosition();
+        
+        // Apply swing
+        if (currentStep % 2 == 1 && swingAmount > 0.0)
+        {
+            ppqPerStep *= (1.0 + swingAmount);
+        }
+        
+        int newStep = static_cast<int>(currentPpq / ppqPerStep) % currentPattern.length;
+        
+        if (newStep != currentStep)
+        {
+            currentStep = newStep;
+            processNextStep();
+        }
+    }
+}
+
+void GrooveSequencerAudioProcessor::processNextStep()
+{
+    const juce::ScopedLock sl(playbackLock);
+    
+    // Check if we're within loop points
+    if (currentStep < loopStartStep || currentStep > loopEndStep)
+    {
+        currentStep = loopStartStep;
+        return;
+    }
+    
+    // Find notes that start on this step
     for (const auto& note : currentPattern.notes)
     {
-        double noteStartBeat = note.startTime / currentPattern.gridSize;
-        double noteDurationBeats = note.duration / currentPattern.gridSize;
-        
-        // Check if note should be played in this block
-        if (noteStartBeat >= startBeat && noteStartBeat < endBeat)
+        double noteStartStep = note.startTime / currentPattern.gridSize;
+        if (std::abs(noteStartStep - currentStep) < 0.001) // Allow for floating point comparison
         {
-            // Calculate sample position within the block
-            int samplePosition = static_cast<int>((noteStartBeat - startBeat) * samplesPerBeat);
-            
-            // Create note-on message
-            int velocity = note.isStaccato ? note.velocity * 0.8 : note.velocity;
-            velocity = juce::jlimit(1, 127, velocity + (note.accent * 20)); // Accent affects velocity
-            
-            auto noteOn = juce::MidiMessage::noteOn(1, note.pitch, (uint8_t)velocity);
-            midiMessages.addEvent(noteOn, samplePosition);
-            
-            // Calculate note-off time
-            double noteLength = note.isStaccato ? noteDurationBeats * 0.5 : noteDurationBeats;
-            int noteOffPosition = static_cast<int>(samplePosition + (noteLength * samplesPerBeat));
-            
-            // If note ends within this block, add note-off message
-            if (noteOffPosition < numSamples)
-            {
-                auto noteOff = juce::MidiMessage::noteOff(1, note.pitch);
-                midiMessages.addEvent(noteOff, noteOffPosition);
-            }
-            else
-            {
-                // Schedule note-off for later
-                scheduledNotes.push_back(note);
-            }
+            triggerNote(note);
         }
-    }
-    
-    // Process any scheduled note-offs
-    for (auto it = scheduledNotes.begin(); it != scheduledNotes.end();)
-    {
-        double noteEndBeat = (it->startTime + it->duration) / currentPattern.gridSize;
-        if (noteEndBeat < endBeat)
-        {
-            int noteOffPosition = static_cast<int>((noteEndBeat - startBeat) * samplesPerBeat);
-            if (noteOffPosition >= 0 && noteOffPosition < numSamples)
-            {
-                auto noteOff = juce::MidiMessage::noteOff(1, it->pitch);
-                midiMessages.addEvent(noteOff, noteOffPosition);
-            }
-            it = scheduledNotes.erase(it);
-        }
-        else
-            ++it;
     }
 }
 
-void GrooveSequencerAudioProcessor::setPattern(const Pattern& newPattern)
+void GrooveSequencerAudioProcessor::triggerNote(const Note& note)
 {
-    currentPattern = newPattern;
-    updateScheduledNotes();
+    if (note.isRest) return;
+    
+    // Calculate actual duration based on gate length and staccato
+    double actualDuration = note.duration;
+    if (note.isStaccato)
+        actualDuration *= 0.5;
+    actualDuration *= gateLength;
+    
+    // Calculate velocity based on accent and velocity scale
+    int velocity = note.velocity;
+    if (note.accent > 0)
+        velocity = juce::jmin(127, static_cast<int>(velocity * (1.0 + note.accent * 0.2)));
+    velocity = static_cast<int>(velocity * velocityScale);
+    
+    // Send note on
+    juce::MidiMessage noteOn = juce::MidiMessage::noteOn(1, note.pitch, (uint8)velocity);
+    noteOn.setTimeStamp(juce::Time::getMillisecondCounterHiRes());
+    lastNoteOnTimestamp = noteOn.getTimeStamp();
+    
+    // Schedule note off
+    double noteOffTime = actualDuration * (60.0 / tempo) * 1000.0; // Convert to milliseconds
+    juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, note.pitch);
+    noteOff.setTimeStamp(lastNoteOnTimestamp + noteOffTime);
+    
+    activeNotes.push_back(note.pitch);
+}
+
+void GrooveSequencerAudioProcessor::stopAllNotes()
+{
+    const juce::ScopedLock sl(playbackLock);
+    
+    for (int note : activeNotes)
+    {
+        juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, note);
+        noteOff.setTimeStamp(juce::Time::getMillisecondCounterHiRes());
+    }
+    
+    activeNotes.clear();
 }
 
 void GrooveSequencerAudioProcessor::startPlayback()
 {
-    currentBeat = 0.0;
-    isPlaying = true;
-    updateScheduledNotes();
+    const juce::ScopedLock sl(playbackLock);
+    currentStep = loopStartStep;
+    playing = true;
 }
 
 void GrooveSequencerAudioProcessor::stopPlayback()
 {
-    isPlaying = false;
-    midiBuffer.clear();
-    scheduledNotes.clear();
-    
-    // Send all notes off
-    for (int channel = 1; channel <= 16; ++channel)
-    {
-        midiBuffer.addEvent(juce::MidiMessage::allNotesOff(channel), 0);
-        midiBuffer.addEvent(juce::MidiMessage::allSoundOff(channel), 0);
-    }
+    const juce::ScopedLock sl(playbackLock);
+    playing = false;
+    stopAllNotes();
 }
 
 void GrooveSequencerAudioProcessor::setTempo(double newTempo)
 {
+    const juce::ScopedLock sl(playbackLock);
     tempo = newTempo;
-    if (getSampleRate() > 0)
-        samplesPerBeat = (getSampleRate() * 60.0) / tempo;
-    currentPattern.tempo = tempo;
+    currentPattern.tempo = newTempo;
 }
 
-void GrooveSequencerAudioProcessor::updateScheduledNotes()
+void GrooveSequencerAudioProcessor::setLoopPoints(int startStep, int endStep)
 {
-    scheduledNotes.clear();
+    const juce::ScopedLock sl(playbackLock);
+    loopStartStep = juce::jlimit(0, currentPattern.length - 1, startStep);
+    loopEndStep = juce::jlimit(loopStartStep, currentPattern.length - 1, endStep);
+}
+
+void GrooveSequencerAudioProcessor::setPattern(const Pattern& newPattern)
+{
+    const juce::ScopedLock sl(playbackLock);
+    currentPattern = newPattern;
+    currentStep = loopStartStep;
+}
+
+void GrooveSequencerAudioProcessor::clearPattern()
+{
+    const juce::ScopedLock sl(playbackLock);
+    currentPattern.notes.clear();
+    stopAllNotes();
+}
+
+void GrooveSequencerAudioProcessor::setGridSize(double size)
+{
+    const juce::ScopedLock sl(playbackLock);
+    currentPattern.gridSize = size;
+}
+
+void GrooveSequencerAudioProcessor::setSwingAmount(double amount)
+{
+    const juce::ScopedLock sl(playbackLock);
+    swingAmount = juce::jlimit(0.0, 1.0, amount);
+}
+
+void GrooveSequencerAudioProcessor::setVelocityScale(double scale)
+{
+    const juce::ScopedLock sl(playbackLock);
+    velocityScale = juce::jlimit(0.0, 2.0, scale);
+}
+
+void GrooveSequencerAudioProcessor::setGateLength(double length)
+{
+    const juce::ScopedLock sl(playbackLock);
+    gateLength = juce::jlimit(0.1, 1.0, length);
+}
+
+void GrooveSequencerAudioProcessor::playbackStarted()
+{
+    startPlayback();
+}
+
+void GrooveSequencerAudioProcessor::playbackStopped()
+{
+    stopPlayback();
 }
 
 juce::AudioProcessorEditor* GrooveSequencerAudioProcessor::createEditor()
 {
-    return new GrooveSequencerAudioProcessorEditor(*this);
+    return new juce::GenericAudioProcessorEditor(*this);
 }
 
 void GrooveSequencerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    // Create XML with the plugin's current state
-    juce::XmlElement xml("GrooveSequencerState");
+    juce::ValueTree state("GrooveSequencerState");
     
-    // Add pattern data
-    auto patternXml = xml.createNewChildElement("Pattern");
-    patternXml->setAttribute("tempo", currentPattern.tempo);
-    patternXml->setAttribute("length", currentPattern.length);
+    // Save pattern data
+    juce::ValueTree patternState("Pattern");
+    patternState.setProperty("length", currentPattern.length, nullptr);
+    patternState.setProperty("tempo", currentPattern.tempo, nullptr);
+    patternState.setProperty("gridSize", currentPattern.gridSize, nullptr);
     
-    // Add notes
-    for (const auto& note : currentPattern.notes) {
-        auto noteXml = patternXml->createNewChildElement("Note");
-        noteXml->setAttribute("pitch", note.pitch);
-        noteXml->setAttribute("velocity", note.velocity);
-        noteXml->setAttribute("startTime", note.startTime);
-        noteXml->setAttribute("duration", note.duration);
-        noteXml->setAttribute("isStaccato", note.isStaccato);
-        noteXml->setAttribute("accent", note.accent);
+    // Save notes
+    for (const auto& note : currentPattern.notes)
+    {
+        juce::ValueTree noteState("Note");
+        noteState.setProperty("pitch", note.pitch, nullptr);
+        noteState.setProperty("startTime", note.startTime, nullptr);
+        noteState.setProperty("duration", note.duration, nullptr);
+        noteState.setProperty("velocity", note.velocity, nullptr);
+        noteState.setProperty("isRest", note.isRest, nullptr);
+        noteState.setProperty("isStaccato", note.isStaccato, nullptr);
+        noteState.setProperty("accent", note.accent, nullptr);
+        patternState.addChild(noteState, -1, nullptr);
     }
     
-    // Convert XML to binary
-    copyXmlToBinary(xml, destData);
+    state.addChild(patternState, -1, nullptr);
+    
+    // Save playback parameters
+    state.setProperty("loopStartStep", loopStartStep, nullptr);
+    state.setProperty("loopEndStep", loopEndStep, nullptr);
+    state.setProperty("swingAmount", swingAmount, nullptr);
+    state.setProperty("velocityScale", velocityScale, nullptr);
+    state.setProperty("gateLength", gateLength, nullptr);
+    
+    std::unique_ptr<juce::XmlElement> xml(state.createXml());
+    copyXmlToBinary(*xml, destData);
 }
 
 void GrooveSequencerAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    // Parse binary data back to XML
     std::unique_ptr<juce::XmlElement> xml(getXmlFromBinary(data, sizeInBytes));
-    
-    if (xml != nullptr && xml->hasTagName("GrooveSequencerState")) {
-        // Get pattern data
-        if (auto* patternXml = xml->getChildByName("Pattern")) {
+    if (xml.get() != nullptr)
+    {
+        juce::ValueTree state = juce::ValueTree::fromXml(*xml);
+        
+        if (juce::ValueTree patternState = state.getChildWithName("Pattern"))
+        {
             Pattern newPattern;
-            newPattern.tempo = patternXml->getDoubleAttribute("tempo", 120.0);
-            newPattern.length = patternXml->getIntAttribute("length", 16);
+            newPattern.length = patternState.getProperty("length", 16);
+            newPattern.tempo = patternState.getProperty("tempo", 120.0);
+            newPattern.gridSize = patternState.getProperty("gridSize", 0.25);
             
-            // Get notes
-            newPattern.notes.clear();
-            forEachXmlChildElement(*patternXml, noteXml) {
-                if (noteXml->hasTagName("Note")) {
+            for (int i = 0; i < patternState.getNumChildren(); ++i)
+            {
+                if (juce::ValueTree noteState = patternState.getChild(i))
+                {
                     Note note;
-                    note.pitch = noteXml->getIntAttribute("pitch", 60);
-                    note.velocity = noteXml->getIntAttribute("velocity", 100);
-                    note.startTime = noteXml->getDoubleAttribute("startTime", 0.0);
-                    note.duration = noteXml->getDoubleAttribute("duration", 1.0);
-                    note.isStaccato = noteXml->getBoolAttribute("isStaccato", false);
-                    note.accent = noteXml->getIntAttribute("accent", 0);
+                    note.pitch = noteState.getProperty("pitch", 60);
+                    note.startTime = noteState.getProperty("startTime", 0.0);
+                    note.duration = noteState.getProperty("duration", 0.25);
+                    note.velocity = noteState.getProperty("velocity", 100);
+                    note.isRest = noteState.getProperty("isRest", false);
+                    note.isStaccato = noteState.getProperty("isStaccato", false);
+                    note.accent = noteState.getProperty("accent", 0);
                     newPattern.notes.push_back(note);
                 }
             }
             
-            currentPattern = newPattern;
+            setPattern(newPattern);
         }
+        
+        // Load playback parameters
+        loopStartStep = state.getProperty("loopStartStep", 0);
+        loopEndStep = state.getProperty("loopEndStep", 15);
+        swingAmount = state.getProperty("swingAmount", 0.0);
+        velocityScale = state.getProperty("velocityScale", 1.0);
+        gateLength = state.getProperty("gateLength", 0.8);
     }
 }
 

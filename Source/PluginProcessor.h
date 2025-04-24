@@ -1,95 +1,108 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_audio_utils/juce_audio_utils.h>
-#include <juce_core/juce_core.h>
-#include <juce_data_structures/juce_data_structures.h>
-#include <juce_events/juce_events.h>
-#include <juce_graphics/juce_graphics.h>
-#include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_gui_extra/juce_gui_extra.h>
-#include "PatternTransformer.h"
+#include <JuceHeader.h>
+#include <vector>
+#include <memory>
 
+// Basic note structure for pattern storage
 struct Note {
-    int pitch;
-    int velocity;
-    double startTime;
-    double duration;
-    bool isStaccato;
-    int accent;
+    int pitch;          // MIDI note number
+    double startTime;   // Start time in beats
+    double duration;    // Duration in beats
+    int velocity;       // MIDI velocity (0-127)
+    bool isRest;       // Whether this is a rest
+    bool isStaccato;   // Staccato articulation flag
+    int accent;        // Accent level (0 = none, 1 = medium, 2 = strong)
 };
 
+// Pattern structure to hold sequence data
 struct Pattern {
-    double tempo;
-    int length;
-    double gridSize;
     std::vector<Note> notes;
+    int length;         // Pattern length in steps
+    double tempo;       // Tempo in BPM
+    double gridSize;    // Grid size in beats (e.g., 0.25 for 16th notes)
 };
 
-class GrooveSequencerAudioProcessor : public juce::AudioProcessor
+class GrooveSequencerAudioProcessor : public juce::AudioProcessor,
+                                    public juce::AudioPlayHead::Listener
 {
 public:
     GrooveSequencerAudioProcessor();
-    ~GrooveSequencerAudioProcessor() override = default;
+    ~GrooveSequencerAudioProcessor() override;
 
-    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
-    void releaseResources() override {}
-
-    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
-
-    void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
-
+    // Standard JUCE processor methods
+    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void releaseResources() override;
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlock (juce::AudioBuffer<double>&, juce::MidiBuffer&) override;
+    
+    // Plugin properties
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-
     const juce::String getName() const override { return JucePlugin_Name; }
-
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
-    bool isMidiEffect() const override { return false; }
+    bool isMidiEffect() const override { return true; }
     double getTailLengthSeconds() const override { return 0.0; }
-
+    
+    // Program handling
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int /*index*/) override {}
-    const juce::String getProgramName(int /*index*/) override { return {}; }
-    void changeProgramName(int /*index*/, const juce::String& /*newName*/) override {}
-
-    void getStateInformation(juce::MemoryBlock& destData) override;
-    void setStateInformation(const void* data, int sizeInBytes) override;
-
-    Pattern& getCurrentPattern() { return currentPattern; }
-    void setCurrentPattern(const Pattern& pattern) { currentPattern = pattern; }
-
-    // Pattern management
+    void setCurrentProgram(int) override {}
+    const juce::String getProgramName(int) override { return {}; }
+    void changeProgramName(int, const juce::String&) override {}
+    
+    // State handling
+    void getStateInformation (juce::MemoryBlock& destData) override;
+    void setStateInformation (const void* data, int sizeInBytes) override;
+    
+    // Transport control
+    void playbackStarted() override;
+    void playbackStopped() override;
     void startPlayback();
     void stopPlayback();
     void setTempo(double newTempo);
+    void setLoopPoints(int startStep, int endStep);
+    bool isPlaying() const { return playing; }
     
-    // Pattern transformation
-    void applyTransformation(TransformationType type);
-    void setRhythmPattern(RhythmPattern pattern);
-    void setArticulation(ArticulationStyle style);
+    // Pattern management
+    void setPattern(const Pattern& newPattern);
+    Pattern& getCurrentPattern() { return currentPattern; }
+    void clearPattern();
     
-    // MIDI handling
-    void handleIncomingMidiMessage(const juce::MidiMessage& message);
-    void addMidiEventToBuffer(const juce::MidiMessage& message, int samplePosition);
+    // Real-time parameter handling
+    void setGridSize(double size);
+    void setSwingAmount(double amount);
+    void setVelocityScale(double scale);
+    void setGateLength(double length);
 
 private:
-    PatternTransformer transformer;
+    // Pattern playback
+    void updatePlaybackPosition(juce::AudioPlayHead::PositionInfo& pos);
+    void processNextStep();
+    void triggerNote(const Note& note);
+    void stopAllNotes();
+    
+    // Pattern data
     Pattern currentPattern;
-    double currentSampleRate;
+    int currentStep;
+    bool playing;
     
+    // Playback parameters
+    double sampleRate;
     double tempo;
-    bool isPlaying;
-    double currentBeat;
-    double samplesPerBeat;
+    int loopStartStep;
+    int loopEndStep;
+    double swingAmount;
+    double velocityScale;
+    double gateLength;
     
-    juce::MidiBuffer midiBuffer;
-    std::vector<Note> scheduledNotes;
+    // MIDI state tracking
+    std::vector<int> activeNotes;
+    juce::uint32 lastNoteOnTimestamp;
     
-    void updateScheduledNotes();
-    void processNextBlock(juce::MidiBuffer& midiMessages, int numSamples);
+    // Threading protection
+    juce::CriticalSection playbackLock;
     
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GrooveSequencerAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GrooveSequencerAudioProcessor)
 }; 

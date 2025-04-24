@@ -45,4 +45,36 @@ Makefile
 
 # Testing
 Testing/
-CTestTestfile.cmake 
+CTestTestfile.cmake
+
+# JUCE-specific
+Builds/
+JuceLibraryCode/
+*.buildinfo
+
+# IDE-specific
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+*.sdf
+*.opensdf
+*.xcuserdata
+*.xcworkspace
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.pbxuser
+
+# Build artifacts
+*.d
+*.dylib
+*.framework
+
+# macOS specific
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*~ 

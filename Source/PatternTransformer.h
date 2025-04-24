@@ -55,6 +55,25 @@ enum class TransformationType {
     Retrograde
 };
 
+struct RandomParameters {
+    // Pitch randomization
+    int minPitchOffset = -12;
+    int maxPitchOffset = 12;
+    
+    // Scale-based randomization
+    int minScaleSteps = -3;
+    int maxScaleSteps = 3;
+    
+    // Rhythm randomization
+    double minDurationMultiplier = 0.5;
+    double maxDurationMultiplier = 2.0;
+    
+    // Probability controls
+    double restProbability = 0.0;      // Probability of generating a rest
+    double repeatProbability = 0.0;    // Probability of repeating last note
+    double octaveJumpProbability = 0.0; // Probability of jumping octaves
+};
+
 class PatternTransformer {
 public:
     PatternTransformer();
@@ -77,6 +96,10 @@ public:
         ArticulationStyle articulation,
         int length);
 
+    // Random parameter controls
+    void setRandomParameters(const RandomParameters& params);
+    RandomParameters getRandomParameters() const;
+
 private:
     std::vector<Note> seedNotes;
     Scale currentScale;
@@ -85,6 +108,7 @@ private:
     ArticulationStyle currentArticulation;
     double currentGridSize;
     bool isThreeTwoClave;
+    RandomParameters randomParams;
     
     // Helper methods for transformations
     std::vector<Note> applyStepUp(const std::vector<Note>& input);
