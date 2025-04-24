@@ -12,6 +12,17 @@ PatternTransformer::PatternTransformer()
     // Initialize with C major scale as default
     currentScale.root = 60; // Middle C
     currentScale.intervals = {0, 2, 4, 5, 7, 9, 11}; // Major scale intervals
+    
+    // Initialize random parameters with defaults
+    randomParams.restProbability = 0.1f;
+    randomParams.repeatProbability = 0.2f;
+    randomParams.octaveJumpProbability = 0.1f;
+    randomParams.minPitchOffset = -4;
+    randomParams.maxPitchOffset = 4;
+    randomParams.minScaleSteps = -2;
+    randomParams.maxScaleSteps = 2;
+    randomParams.minDurationMultiplier = 0.5f;
+    randomParams.maxDurationMultiplier = 2.0f;
 }
 
 void PatternTransformer::setSeedNotes(const std::vector<Note>& seeds) {
@@ -22,6 +33,7 @@ Pattern PatternTransformer::generatePattern(TransformationType type, int length)
     Pattern result;
     result.length = length;
     result.tempo = 120.0; // Default tempo
+    result.gridSize = currentGridSize;
     
     // Start with seed notes
     result.notes = seedNotes;
@@ -495,6 +507,59 @@ Pattern PatternTransformer::generatePatternWithRhythm(
     return pattern;
 }
 
+Pattern PatternTransformer::applyRhythmAndArticulation(
+    const Pattern& source,
+    TransformationType type,
+    RhythmPattern rhythm,
+    ArticulationStyle style,
+    int length)
+{
+    // First apply the transformation
+    Pattern transformed = transformPattern(source, type);
+    
+    // Then apply rhythm pattern
+    std::vector<Note> rhythmicNotes = applyRhythmPattern(transformed.notes, rhythm);
+    
+    // Finally apply articulation
+    std::vector<Note> articulatedNotes = applyArticulationStyle(rhythmicNotes, style);
+    
+    // Create final pattern
+    Pattern result = transformed;
+    result.notes = articulatedNotes;
+    result.length = length;
+    
+    return result;
+}
+
+std::vector<Note> PatternTransformer::applyArticulationStyle(
+    const std::vector<Note>& input,
+    ArticulationStyle style)
+{
+    std::vector<Note> notes = input;
+    for (size_t i = 0; i < notes.size(); ++i) {
+        notes[i].isStaccato = shouldBeStaccato(i, style);
+        
+        if (notes[i].isStaccato) {
+            // For staccato, make the note shorter but keep the same start time
+            double originalDuration = notes[i].duration;
+            notes[i].duration = originalDuration * 0.5; // 50% of original duration
+        }
+    }
+    
+    return notes;
+}
+
+std::vector<Note> PatternTransformer::applyBasicRhythmPattern(
+    const std::vector<Note>& input,
+    RhythmPattern pattern)
+{
+    std::vector<Note> result = input;
+    for (size_t i = 0; i < result.size(); ++i) {
+        result[i].duration = calculateNoteDuration(i, pattern);
+    }
+    return result;
+}
+
 double PatternTransformer::calculateNoteDuration(int position, RhythmPattern pattern) {
     double baseUnit = currentGridSize;
     double longNote = baseUnit * 2.0;
@@ -553,6 +618,9 @@ bool PatternTransformer::shouldBeStaccato(int position, ArticulationStyle style)
             // Example pattern: staccato every third note
             return position % 3 == 0;
         }
+            
+        case ArticulationStyle::Random:
+            return std::uniform_real_distribution<>(0.0, 1.0)(rng) < 0.5;
             
         default:
             return false;
@@ -613,101 +681,34 @@ std::vector<RhythmStep> PatternTransformer::createSyncopatedPattern(
     return steps;
 }
 
-Pattern PatternTransformer::applyRhythmAndArticulation(
-    const Pattern& source,
-    TransformationType type,
-    RhythmPattern rhythm,
-    ArticulationStyle articulation,
-    int length)
-{
-    // First apply the transformation
-    Pattern transformed = transformPattern(source, type);
-    
-    // Then apply rhythm pattern
-    std::vector<Note> rhythmicNotes = applyRhythmPattern(transformed.notes, rhythm);
-    
-    // Finally apply articulation
-    std::vector<Note> articulatedNotes = applyArticulationStyle(rhythmicNotes, articulation);
-    
-    // Create final pattern
-    Pattern result = transformed;
-    result.notes = articulatedNotes;
-    result.length = length;
-    
-    return result;
-}
-
-std::vector<Note> PatternTransformer::applyArticulationStyle(
-    const std::vector<Note>& input,
-    ArticulationStyle style)
-{
-    std::vector<Note> notes = input;
-    for (size_t i = 0; i < notes.size(); ++i) {
-        notes[i].isStaccato = shouldBeStaccato(i, style);
-        
-        if (notes[i].isStaccato) {
-            // For staccato, make the note shorter but keep the same start time
-            double originalDuration = notes[i].duration;
-            notes[i].duration = originalDuration * 0.5; // 50% of original duration
-        }
-    }
-    
-    return notes;
-}
-
 std::vector<Note> PatternTransformer::applyRhythmPattern(
     const std::vector<Note>& input,
     RhythmPattern pattern)
 {
-    std::vector<int> accents;
-    std::vector<double> durations;
+    // First apply basic rhythm pattern
+    std::vector<Note> basicPattern = applyBasicRhythmPattern(input, pattern);
     
+    // Then apply specific pattern modifications
     switch (pattern) {
-        case RhythmPattern::Regular:
-            accents = {2, 0, 1, 0};
-            durations = {1.0, 1.0, 1.0, 1.0};
-            break;
-            
-        case RhythmPattern::Dotted:
-            accents = {2, 0};
-            durations = {1.5, 0.5};
-            break;
-            
         case RhythmPattern::Swing:
-            accents = {2, 0};
-            durations = {1.67, 0.33};
+            applySwingFeel(basicPattern);
             break;
             
-        case RhythmPattern::Syncopated:
-            accents = {2, 0, 1, 0, 1, 2, 0, 1};
-            durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5, 0.5};
-            break;
-            
-        case RhythmPattern::Random: {
-            const int patternLength = 8;
-            std::uniform_int_distribution<> accentDist(0, 2);
-            std::uniform_real_distribution<> durationDist(0.5, 1.5);
-            
-            for (int i = 0; i < patternLength; ++i) {
-                accents.push_back(accentDist(rng));
-                durations.push_back(durationDist(rng));
-            }
-            break;
+        case RhythmPattern::Syncopated: {
+            std::vector<int> accents = {2, 0, 1, 0, 1, 2, 0, 1};
+            std::vector<double> durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5, 0.5};
+            auto steps = createSyncopatedPattern(accents, durations);
+            return applyRhythmSteps(input, steps);
         }
             
         case RhythmPattern::Clave:
-            if (isThreeTwoClave) {
-                accents = {2, 0, 0, 2, 0, 0, 2, 0, 2, 0, 2, 0};
-                durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5};
-            } else {
-                accents = {2, 0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 2};
-                durations = {1.0, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0};
-            }
-            break;
+            return applyClavePattern(input, isThreeTwoClave);
+            
+        default:
+            return basicPattern;
     }
     
-    auto steps = createSyncopatedPattern(accents, durations);
-    return applyRhythmSteps(input, steps);
+    return basicPattern;
 }
 
 std::vector<Note> PatternTransformer::applySambaPattern(const std::vector<Note>& input) {

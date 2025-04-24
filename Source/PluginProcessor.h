@@ -1,108 +1,115 @@
 #pragma once
 
-#include <JuceHeader.h>
-#include <vector>
-#include <memory>
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_data_structures/juce_data_structures.h>
+#include "Pattern.h"
+#include "PatternTransformer.h"
 
-// Basic note structure for pattern storage
-struct Note {
-    int pitch;          // MIDI note number
-    double startTime;   // Start time in beats
-    double duration;    // Duration in beats
-    int velocity;       // MIDI velocity (0-127)
-    bool isRest;       // Whether this is a rest
-    bool isStaccato;   // Staccato articulation flag
-    int accent;        // Accent level (0 = none, 1 = medium, 2 = strong)
-};
-
-// Pattern structure to hold sequence data
-struct Pattern {
-    std::vector<Note> notes;
-    int length;         // Pattern length in steps
-    double tempo;       // Tempo in BPM
-    double gridSize;    // Grid size in beats (e.g., 0.25 for 16th notes)
-};
-
-class GrooveSequencerAudioProcessor : public juce::AudioProcessor,
-                                    public juce::AudioPlayHead::Listener
+class GrooveSequencerAudioProcessor : public juce::AudioProcessor
 {
 public:
     GrooveSequencerAudioProcessor();
     ~GrooveSequencerAudioProcessor() override;
 
-    // Standard JUCE processor methods
-    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
-    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
-    void processBlock (juce::AudioBuffer<double>&, juce::MidiBuffer&) override;
-    
-    // Plugin properties
+
+    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
+
+    void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    void processBlock(juce::AudioBuffer<double>&, juce::MidiBuffer&) override;
+
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
+
     const juce::String getName() const override { return JucePlugin_Name; }
+
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return true; }
     double getTailLengthSeconds() const override { return 0.0; }
-    
-    // Program handling
+
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
-    void setCurrentProgram(int) override {}
-    const juce::String getProgramName(int) override { return {}; }
-    void changeProgramName(int, const juce::String&) override {}
-    
-    // State handling
-    void getStateInformation (juce::MemoryBlock& destData) override;
-    void setStateInformation (const void* data, int sizeInBytes) override;
+    void setCurrentProgram(int /*index*/) override {}
+    const juce::String getProgramName(int /*index*/) override { return {}; }
+    void changeProgramName(int /*index*/, const juce::String& /*newName*/) override {}
+
+    void getStateInformation(juce::MemoryBlock& destData) override;
+    void setStateInformation(const void* data, int sizeInBytes) override;
+
+    // Pattern management
+    void setPattern(const Pattern& pattern);
+    const Pattern& getPattern() const { return currentPattern; }
+    void clearPattern();
     
     // Transport control
-    void playbackStarted() override;
-    void playbackStopped() override;
     void startPlayback();
     void stopPlayback();
     void setTempo(double newTempo);
-    void setLoopPoints(int startStep, int endStep);
+    double getTempo() const { return currentPattern.tempo; }
     bool isPlaying() const { return playing; }
     
-    // Pattern management
-    void setPattern(const Pattern& newPattern);
-    Pattern& getCurrentPattern() { return currentPattern; }
-    void clearPattern();
-    
-    // Real-time parameter handling
+    // Grid settings
     void setGridSize(double size);
+    double getGridSize() const { return currentPattern.gridSize; }
+    
+    // Playback settings
+    void setSyncToHost(bool sync) { syncToHost = sync; }
+    bool getSyncToHost() const { return syncToHost; }
     void setSwingAmount(double amount);
+    double getSwingAmount() const { return swingAmount; }
     void setVelocityScale(double scale);
+    double getVelocityScale() const { return velocityScale; }
     void setGateLength(double length);
+    double getGateLength() const { return gateLength; }
+    
+    void setLoopPoints(int startStep, int endStep);
+    
+    enum class ArticulationStyle
+    {
+        Natural,
+        Staccato,
+        Legato
+    };
+    
+    void setArticulationStyle(ArticulationStyle style) { articulationStyle = style; }
+    ArticulationStyle getArticulationStyle() const { return articulationStyle; }
+
+    void playbackStarted();
+    void playbackStopped();
 
 private:
-    // Pattern playback
-    void updatePlaybackPosition(juce::AudioPlayHead::PositionInfo& pos);
+    void updatePlaybackPosition(const juce::AudioPlayHead::PositionInfo& positionInfo);
+    void handleIncomingMidiMessage(const juce::MidiMessage& message);
+    void handleNoteOn(const juce::MidiMessage& noteOn);
+    void handleNoteOff(const juce::MidiMessage& noteOff);
     void processNextStep();
     void triggerNote(const Note& note);
     void stopAllNotes();
     
-    // Pattern data
     Pattern currentPattern;
-    int currentStep;
-    bool playing;
+    PatternTransformer transformer;
     
-    // Playback parameters
-    double sampleRate;
-    double tempo;
-    int loopStartStep;
-    int loopEndStep;
-    double swingAmount;
-    double velocityScale;
-    double gateLength;
+    bool playing{false};
+    bool syncToHost{false};
+    double currentPosition{0.0};
+    double sampleRate{44100.0};
+    int currentStep{0};
+    int loopStartStep{0};
+    int loopEndStep{15};
     
-    // MIDI state tracking
+    double swingAmount{0.0};
+    double velocityScale{1.0};
+    double gateLength{0.8};
+    ArticulationStyle articulationStyle{ArticulationStyle::Natural};
+    
+    juce::uint32 lastNoteOnTimestamp{0};
+    juce::AudioBuffer<float> floatBuffer;
     std::vector<int> activeNotes;
-    juce::uint32 lastNoteOnTimestamp;
-    
-    // Threading protection
     juce::CriticalSection playbackLock;
     
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GrooveSequencerAudioProcessor)
+    juce::ValueTree state;
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GrooveSequencerAudioProcessor)
 }; 

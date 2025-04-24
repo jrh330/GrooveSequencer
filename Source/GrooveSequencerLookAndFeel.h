@@ -7,6 +7,13 @@ class GrooveSequencerLookAndFeel : public juce::LookAndFeel_V4
 public:
     GrooveSequencerLookAndFeel();
     
+    juce::Colour getBackgroundColour() const;
+    juce::Colour getBackgroundAccentColour() const;
+    juce::Colour getGridCellBorderColour() const;
+    juce::Colour getGridCellStaccatoColour() const;
+    juce::Colour getPlayheadColour() const;
+    juce::Colour getGridLineColour() const;
+    
     // Color palette
     const juce::Colour mint      { 0xFF40B0A2 };  // Olivetti turquoise
     const juce::Colour yellow    { 0xFFFFC857 };  // Warm yellow

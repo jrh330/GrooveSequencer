@@ -200,4 +200,34 @@ void GrooveSequencerLookAndFeel::drawGeometricAccent(juce::Graphics& g,
     
     g.setColour(colour);
     g.fillPath(path);
+}
+
+juce::Colour GrooveSequencerLookAndFeel::getBackgroundColour() const
+{
+    return offWhite;
+}
+
+juce::Colour GrooveSequencerLookAndFeel::getBackgroundAccentColour() const
+{
+    return olivettiRed.withAlpha(0.8f);
+}
+
+juce::Colour GrooveSequencerLookAndFeel::getGridCellBorderColour() const
+{
+    return olivettiBlue;
+}
+
+juce::Colour GrooveSequencerLookAndFeel::getGridCellStaccatoColour() const
+{
+    return olivettiRed;
+}
+
+juce::Colour GrooveSequencerLookAndFeel::getPlayheadColour() const
+{
+    return olivettiBlue.withAlpha(0.5f);
+}
+
+juce::Colour GrooveSequencerLookAndFeel::getGridLineColour() const
+{
+    return olivettiBlue.withAlpha(0.3f);
 } 

@@ -5,25 +5,33 @@ project(GrooveSequencer VERSION 1.0.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add JUCE as a subdirectory
-add_subdirectory(JUCE)
-
-# Initialize JUCE
-juce_add_plugin(GrooveSequencer
-    VERSION 1.0.0                            # Set this if you want to update the version number
-    COMPANY_NAME "YourCompany"               # Replace with your company name
-    BUNDLE_ID "com.yourcompany.groovesequencer"  # Fixed bundle ID without spaces
-    IS_SYNTH TRUE                           # Is this a synth or an effect?
-    NEEDS_MIDI_INPUT TRUE                   # Does it need midi input?
-    NEEDS_MIDI_OUTPUT TRUE                  # Does it produce midi output?
-    IS_MIDI_EFFECT TRUE                     # Is this plugin a MIDI effect?
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE       # Does the editor need keyboard focus?
-    COPY_PLUGIN_AFTER_BUILD TRUE            # Should the plugin be installed after building?
-    PLUGIN_MANUFACTURER_CODE Juce           # A four-character manufacturer id
-    PLUGIN_CODE Gseq                        # A unique four-character plugin id
-    FORMATS AU VST3                         # The formats to build. Other valid formats: VST AAX Unity
-    PRODUCT_NAME "GrooveSequencer"          # The name of the final executable
+# Fetch JUCE if not already available
+include(FetchContent)
+FetchContent_Declare(
+    juce
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG 7.0.5
 )
+FetchContent_MakeAvailable(juce)
+
+# Add JUCE modules
+juce_add_plugin(GrooveSequencer
+    VERSION 1.0.0
+    COMPANY_NAME "Your Company"
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT TRUE
+    IS_MIDI_EFFECT TRUE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+    COPY_PLUGIN_AFTER_BUILD TRUE
+    PLUGIN_MANUFACTURER_CODE Ycom
+    PLUGIN_CODE Grsq
+    FORMATS AU VST3 Standalone
+    PRODUCT_NAME "Groove Sequencer"
+)
+
+# Generate JuceHeader.h
+juce_generate_juce_header(GrooveSequencer)
 
 # Add source files
 target_sources(GrooveSequencer
@@ -31,23 +39,38 @@ target_sources(GrooveSequencer
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/PatternTransformer.cpp
+        Source/GrooveSequencerLookAndFeel.cpp
+        Source/Components/GridSequencerComponent.cpp
+        Source/Components/PatternBrowserComponent.cpp
+        Source/Components/PatternControlsComponent.cpp
+        Source/Components/TransportComponent.cpp
 )
 
-# Add compiler warnings using standard target_compile_options
-target_compile_options(GrooveSequencer
+# Set include directories
+target_include_directories(GrooveSequencer
     PRIVATE
-        $<$<CXX_COMPILER_ID:MSVC>:/W4>
-        $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>
+        ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
 
-# Link with JUCE modules
+# Link JUCE modules
+target_compile_definitions(GrooveSequencer
+    PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_REPORT_APP_USAGE=0
+)
+
 target_link_libraries(GrooveSequencer
     PRIVATE
-        juce::juce_audio_utils
-        juce::juce_audio_processors
+        juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
-        juce::juce_audio_basics
+        juce::juce_audio_plugin_client
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
         juce::juce_data_structures
         juce::juce_events
         juce::juce_graphics

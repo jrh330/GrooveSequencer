@@ -1,50 +1,53 @@
 #pragma once
 
-#include <JuceHeader.h>
-#include "PluginProcessor.h"
-#include "Components/GridSequencerComponent.h"
-#include "GrooveSequencerLookAndFeel.h"
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_gui_basics/juce_gui_basics.h>
+
+// Forward declarations to break circular dependencies
+class GrooveSequencerAudioProcessor;
+class GridSequencerComponent;
+class GrooveSequencerLookAndFeel;
 
 class GrooveSequencerAudioProcessorEditor : public juce::AudioProcessorEditor
 {
 public:
-    GrooveSequencerAudioProcessorEditor(GrooveSequencerAudioProcessor& p);
+    explicit GrooveSequencerAudioProcessorEditor(GrooveSequencerAudioProcessor&);
     ~GrooveSequencerAudioProcessorEditor() override;
 
-    void paint(juce::Graphics& g) override;
+    void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
-    GrooveSequencerAudioProcessor& processor;
+    GrooveSequencerAudioProcessor& audioProcessor;
     std::unique_ptr<GrooveSequencerLookAndFeel> lookAndFeel;
-    
-    // Grid component
-    GridSequencerComponent gridSequencer;
+    std::unique_ptr<GridSequencerComponent> gridSequencer;
     
     // Transport controls
-    juce::TextButton playButton;
-    juce::TextButton stopButton;
-    juce::Label tempoLabel;
+    juce::TextButton playButton{"Play"};
+    juce::TextButton stopButton{"Stop"};
     juce::Slider tempoSlider;
-    juce::ToggleButton syncButton;
+    juce::Label tempoLabel;
+    
+    // Grid controls
+    juce::Slider swingSlider;
+    juce::Label swingLabel;
+    juce::Slider velocityScaleSlider;
+    juce::Label velocityScaleLabel;
+    juce::Slider gateLengthSlider;
+    juce::Label gateLengthLabel;
     
     // Grid size controls
-    juce::Label gridSizeLabel;
+    juce::Label gridSizeLabel{"", "Grid Size"};
     juce::ComboBox gridSizeSelector;
-    juce::ToggleButton tripletButton;
-    juce::ToggleButton dottedButton;
+    juce::ToggleButton tripletButton{"Triplet"};
+    juce::ToggleButton dottedButton{"Dotted"};
     
     // Articulation controls
     juce::Label articulationLabel{"", "Articulation"};
     juce::ComboBox articulationSelector;
     
-    // Grid controls
-    juce::Label swingLabel;
-    juce::Slider swingSlider;
-    juce::Label velocityScaleLabel;
-    juce::Slider velocityScaleSlider;
-    juce::Label gateLengthLabel;
-    juce::Slider gateLengthSlider;
+    // Transport controls
+    juce::ToggleButton syncButton{"Sync to Host"};
     
     void setupTransportControls();
     void setupGridSizeControls();
