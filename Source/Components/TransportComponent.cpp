@@ -37,7 +37,7 @@ TransportComponent::~TransportComponent()
 
 void TransportComponent::paint(juce::Graphics& g)
 {
-    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColour));
+    g.fillAll(getLookAndFeel().findColour(juce::DocumentWindow::backgroundColourId));
     
     g.setColour(juce::Colours::white);
     g.setFont(14.0f);

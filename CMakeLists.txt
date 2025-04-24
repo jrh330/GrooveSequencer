@@ -50,6 +50,7 @@ target_sources(GrooveSequencer
 target_include_directories(GrooveSequencer
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Source
+        ${CMAKE_CURRENT_BINARY_DIR}/GrooveSequencer_artefacts/JuceLibraryCode
 )
 
 # Link JUCE modules

@@ -209,25 +209,25 @@ juce::Colour GrooveSequencerLookAndFeel::getBackgroundColour() const
 
 juce::Colour GrooveSequencerLookAndFeel::getBackgroundAccentColour() const
 {
-    return olivettiRed.withAlpha(0.8f);
+    return red.withAlpha(0.8f);
 }
 
 juce::Colour GrooveSequencerLookAndFeel::getGridCellBorderColour() const
 {
-    return olivettiBlue;
+    return blue;
 }
 
 juce::Colour GrooveSequencerLookAndFeel::getGridCellStaccatoColour() const
 {
-    return olivettiRed;
+    return red;
 }
 
 juce::Colour GrooveSequencerLookAndFeel::getPlayheadColour() const
 {
-    return olivettiBlue.withAlpha(0.5f);
+    return blue.withAlpha(0.5f);
 }
 
 juce::Colour GrooveSequencerLookAndFeel::getGridLineColour() const
 {
-    return olivettiBlue.withAlpha(0.3f);
+    return blue.withAlpha(0.3f);
 } 

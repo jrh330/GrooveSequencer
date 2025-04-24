@@ -1,110 +1,149 @@
 #include "PatternTransformer.h"
 #include <ctime>
 #include <algorithm>
+#include <iostream>
+#include <iomanip>
+#include <chrono>
 
-PatternTransformer::PatternTransformer() 
-    : rng(std::time(nullptr))
-    , currentRhythm(RhythmPattern::Regular)
+namespace PTLogger {
+    void log(LogLevel level, const std::string& message, const std::string& function) {
+        std::string levelStr;
+        switch (level) {
+            case LogLevel::Debug: levelStr = "DEBUG"; break;
+            case LogLevel::Info: levelStr = "INFO"; break;
+            case LogLevel::Warning: levelStr = "WARN"; break;
+            case LogLevel::Error: levelStr = "ERROR"; break;
+        }
+        
+        std::stringstream ss;
+        ss << "[" << levelStr << "] " << function << ": " << message;
+        juce::Logger::writeToLog(ss.str());
+    }
+
+    std::string noteToString(const Note& note) {
+        std::stringstream ss;
+        ss << "Note{pitch=" << note.pitch
+           << ", velocity=" << note.velocity
+           << ", startTime=" << note.startTime
+           << ", duration=" << note.duration
+           << ", accent=" << note.accent
+           << ", active=" << note.active
+           << ", staccato=" << note.isStaccato
+           << ", rest=" << note.isRest << "}";
+        return ss.str();
+    }
+
+    std::string notesToString(const std::vector<Note>& notes) {
+        std::stringstream ss;
+        ss << "Notes[" << notes.size() << "]={";
+        for (size_t i = 0; i < notes.size(); ++i) {
+            if (i > 0) ss << ", ";
+            ss << noteToString(notes[i]);
+        }
+        ss << "}";
+        return ss.str();
+    }
+
+    std::string rhythmPatternToString(RhythmPattern pattern) {
+        switch (pattern) {
+            case RhythmPattern::Regular: return "Regular";
+            case RhythmPattern::Dotted: return "Dotted";
+            case RhythmPattern::Swing: return "Swing";
+            case RhythmPattern::Syncopated: return "Syncopated";
+            case RhythmPattern::Random: return "Random";
+            case RhythmPattern::Clave: return "Clave";
+            case RhythmPattern::LongShort: return "LongShort";
+            case RhythmPattern::ShortLong: return "ShortLong";
+            case RhythmPattern::LongShortShort: return "LongShortShort";
+            case RhythmPattern::ShortShortLong: return "ShortShortLong";
+            case RhythmPattern::DottedEighth: return "DottedEighth";
+            case RhythmPattern::Triplet: return "Triplet";
+            case RhythmPattern::Straight: return "Straight";
+            case RhythmPattern::ThreeTwoClave: return "ThreeTwoClave";
+            case RhythmPattern::TwoThreeClave: return "TwoThreeClave";
+            case RhythmPattern::Shuffle: return "Shuffle";
+            case RhythmPattern::Custom: return "Custom";
+        }
+        return "Unknown";
+    }
+
+    std::string transformationTypeToString(TransformationType type) {
+        switch (type) {
+            case TransformationType::StepUp: return "StepUp";
+            case TransformationType::StepDown: return "StepDown";
+            case TransformationType::UpTwoDownOne: return "UpTwoDownOne";
+            case TransformationType::SkipOne: return "SkipOne";
+            case TransformationType::Arch: return "Arch";
+            case TransformationType::Pendulum: return "Pendulum";
+            case TransformationType::PowerChord: return "PowerChord";
+            case TransformationType::RandomFree: return "RandomFree";
+            case TransformationType::RandomInKey: return "RandomInKey";
+            case TransformationType::RandomRhythmic: return "RandomRhythmic";
+            case TransformationType::Invert: return "Invert";
+            case TransformationType::Mirror: return "Mirror";
+            case TransformationType::Retrograde: return "Retrograde";
+            default: return "Unknown";
+        }
+    }
+
+    std::string articulationStyleToString(ArticulationStyle style) {
+        switch (style) {
+            case ArticulationStyle::Legato: return "Legato";
+            case ArticulationStyle::Staccato: return "Staccato";
+            case ArticulationStyle::Mixed: return "Mixed";
+            case ArticulationStyle::Accented: return "Accented";
+            case ArticulationStyle::Random: return "Random";
+            case ArticulationStyle::Pattern: return "Pattern";
+            case ArticulationStyle::Normal: return "Normal";
+            case ArticulationStyle::AlternatingStaccato: return "AlternatingStaccato";
+            case ArticulationStyle::OffbeatAccent: return "OffbeatAccent";
+            case ArticulationStyle::Custom: return "Custom";
+        }
+        return "Unknown";
+    }
+}
+
+PatternTransformer::PatternTransformer()
+    : currentRhythm(RhythmPattern::Regular)
     , currentArticulation(ArticulationStyle::Legato)
     , currentGridSize(0.25) // Default to 16th notes
     , isThreeTwoClave(false)
+    , rng(std::time(nullptr))
 {
-    // Initialize with C major scale as default
+    // Initialize default scale (C major)
     currentScale.root = 60; // Middle C
     currentScale.intervals = {0, 2, 4, 5, 7, 9, 11}; // Major scale intervals
-    
-    // Initialize random parameters with defaults
-    randomParams.restProbability = 0.1f;
-    randomParams.repeatProbability = 0.2f;
-    randomParams.octaveJumpProbability = 0.1f;
-    randomParams.minPitchOffset = -4;
-    randomParams.maxPitchOffset = 4;
-    randomParams.minScaleSteps = -2;
-    randomParams.maxScaleSteps = 2;
-    randomParams.minDurationMultiplier = 0.5f;
-    randomParams.maxDurationMultiplier = 2.0f;
 }
 
 void PatternTransformer::setSeedNotes(const std::vector<Note>& seeds) {
     seedNotes = seeds;
 }
 
-Pattern PatternTransformer::generatePattern(TransformationType type, int length) {
+Pattern PatternTransformer::generatePattern(TransformationType type, int length)
+{
     Pattern result;
     result.length = length;
-    result.tempo = 120.0; // Default tempo
-    result.gridSize = currentGridSize;
     
-    // Start with seed notes
-    result.notes = seedNotes;
+    // Generate initial notes
+    std::vector<Note> notes = generatePattern(length);
     
-    // Generate additional notes based on transformation type
-    while (result.notes.size() < length) {
-        std::vector<Note> nextNotes;
-        switch (type) {
-            case TransformationType::StepUp:
-                nextNotes = applyStepUp(result.notes);
-                break;
-            case TransformationType::StepDown:
-                nextNotes = applyStepDown(result.notes);
-                break;
-            case TransformationType::UpTwoDownOne:
-                nextNotes = applyUpTwoDownOne(result.notes);
-                break;
-            case TransformationType::SkipOne:
-                nextNotes = applySkipOne(result.notes);
-                break;
-            case TransformationType::Arch:
-                nextNotes = applyArch(result.notes);
-                break;
-            case TransformationType::Pendulum:
-                nextNotes = applyPendulum(result.notes);
-                break;
-            case TransformationType::PowerChord:
-                nextNotes = applyPowerChord(result.notes);
-                break;
-            case TransformationType::RandomFree:
-                nextNotes = applyRandomFree(result.notes);
-                break;
-            case TransformationType::RandomInKey:
-                nextNotes = applyRandomInKey(result.notes);
-                break;
-            case TransformationType::RandomRhythmic:
-                nextNotes = applyRandomRhythmic(result.notes);
-                break;
-            default:
-                break;
-        }
-        result.notes.insert(result.notes.end(), nextNotes.begin(), nextNotes.end());
-    }
+    // Apply transformation
+    notes = applyTransformation(notes, type);
     
-    // Trim to exact length if necessary
-    if (result.notes.size() > length) {
-        result.notes.resize(length);
-    }
+    // Apply rhythm pattern
+    notes = applyRhythmPattern(notes, currentRhythm);
     
+    // Apply articulation
+    notes = applyArticulationStyle(notes, currentArticulation);
+    
+    result.notes = std::move(notes);
     return result;
 }
 
-Pattern PatternTransformer::transformPattern(const Pattern& source, TransformationType type) {
+Pattern PatternTransformer::transformPattern(const Pattern& source, TransformationType type)
+{
     Pattern result = source;
-    
-    switch (type) {
-        case TransformationType::Invert:
-            result.notes = applyInversion(source.notes);
-            break;
-        case TransformationType::Mirror:
-            result.notes = applyMirror(source.notes);
-            break;
-        case TransformationType::Retrograde:
-            result.notes = applyRetrograde(source.notes);
-            break;
-        default:
-            // For other transformations, generate new pattern
-            result = generatePattern(type, source.length);
-            break;
-    }
-    
+    result.notes = applyTransformation(source.notes, type);
     return result;
 }
 
@@ -375,10 +414,6 @@ void PatternTransformer::setRandomParameters(const RandomParameters& params) {
     randomParams = params;
 }
 
-RandomParameters PatternTransformer::getRandomParameters() const {
-    return randomParams;
-}
-
 std::vector<Note> PatternTransformer::applyRandomFree(const std::vector<Note>& input) {
     std::vector<Note> result;
     if (input.empty()) return result;
@@ -507,124 +542,69 @@ Pattern PatternTransformer::generatePatternWithRhythm(
     return pattern;
 }
 
-Pattern PatternTransformer::applyRhythmAndArticulation(
-    const Pattern& source,
-    TransformationType type,
-    RhythmPattern rhythm,
-    ArticulationStyle style,
-    int length)
-{
-    // First apply the transformation
-    Pattern transformed = transformPattern(source, type);
-    
-    // Then apply rhythm pattern
-    std::vector<Note> rhythmicNotes = applyRhythmPattern(transformed.notes, rhythm);
-    
-    // Finally apply articulation
-    std::vector<Note> articulatedNotes = applyArticulationStyle(rhythmicNotes, style);
-    
-    // Create final pattern
-    Pattern result = transformed;
-    result.notes = articulatedNotes;
-    result.length = length;
-    
-    return result;
-}
-
-std::vector<Note> PatternTransformer::applyArticulationStyle(
-    const std::vector<Note>& input,
-    ArticulationStyle style)
-{
-    std::vector<Note> notes = input;
-    for (size_t i = 0; i < notes.size(); ++i) {
-        notes[i].isStaccato = shouldBeStaccato(i, style);
-        
-        if (notes[i].isStaccato) {
-            // For staccato, make the note shorter but keep the same start time
-            double originalDuration = notes[i].duration;
-            notes[i].duration = originalDuration * 0.5; // 50% of original duration
-        }
-    }
-    
-    return notes;
-}
-
-std::vector<Note> PatternTransformer::applyBasicRhythmPattern(
-    const std::vector<Note>& input,
-    RhythmPattern pattern)
-{
-    std::vector<Note> result = input;
-    for (size_t i = 0; i < result.size(); ++i) {
-        result[i].duration = calculateNoteDuration(i, pattern);
-    }
-    return result;
-}
-
 double PatternTransformer::calculateNoteDuration(int position, RhythmPattern pattern) {
-    double baseUnit = currentGridSize;
-    double longNote = baseUnit * 2.0;
-    double shortNote = baseUnit * 0.5;
-    
     switch (pattern) {
         case RhythmPattern::Regular:
-            return baseUnit;
-            
-        case RhythmPattern::LongShort:
-            return (position % 2 == 0) ? longNote : shortNote;
-            
-        case RhythmPattern::ShortLong:
-            return (position % 2 == 0) ? shortNote : longNote;
-            
-        case RhythmPattern::LongShortShort: {
-            int pos = position % 3;
-            return (pos == 0) ? longNote : shortNote;
-        }
-            
-        case RhythmPattern::ShortShortLong: {
-            int pos = position % 3;
-            return (pos == 2) ? longNote : shortNote;
-        }
-            
-        case RhythmPattern::DottedEighth: {
-            int pos = position % 2;
-            return (pos == 0) ? baseUnit * 1.5 : baseUnit * 0.5;
-        }
-            
+        case RhythmPattern::Straight:
+            return 1.0;
+        case RhythmPattern::Dotted:
+            return position % 2 == 0 ? 1.5 : 0.5;
         case RhythmPattern::Triplet:
-            return baseUnit * (2.0 / 3.0);
-            
-        case RhythmPattern::Swing: {
-            int pos = position % 2;
-            return (pos == 0) ? baseUnit * 1.67 : baseUnit * 0.33;
-        }
-            
-        default:
-            return baseUnit;
+            return 0.666667;
+        case RhythmPattern::Swing:
+            return position % 2 == 0 ? 0.666667 : 0.333333;
+        case RhythmPattern::Syncopated:
+            return position % 3 == 0 ? 1.5 : 0.75;
+        case RhythmPattern::ThreeTwoClave:
+            return isThreeTwoClave ? (position % 2 == 0 ? 1.5 : 0.5) : 1.0;
+        case RhythmPattern::TwoThreeClave:
+            return !isThreeTwoClave ? (position % 2 == 0 ? 1.5 : 0.5) : 1.0;
+        case RhythmPattern::Shuffle:
+            return position % 2 == 0 ? 0.75 : 0.25;
+        case RhythmPattern::Custom:
+            return 1.0;
+        case RhythmPattern::Random:
+            return getRandomDouble(0.5, 1.5);
+        case RhythmPattern::Clave:
+            return position % 2 == 0 ? 1.0 : 0.5;
+        case RhythmPattern::LongShort:
+            return position % 2 == 0 ? 1.5 : 0.5;
+        case RhythmPattern::ShortLong:
+            return position % 2 == 0 ? 0.5 : 1.5;
+        case RhythmPattern::LongShortShort:
+            return position % 3 == 0 ? 1.5 : 0.5;
+        case RhythmPattern::ShortShortLong:
+            return position % 3 == 2 ? 1.5 : 0.5;
+        case RhythmPattern::DottedEighth:
+            return position % 3 == 0 ? 1.5 : 0.75;
     }
+    return 1.0;
 }
 
 bool PatternTransformer::shouldBeStaccato(int position, ArticulationStyle style) {
     switch (style) {
         case ArticulationStyle::Legato:
             return false;
-            
         case ArticulationStyle::Staccato:
             return true;
-            
         case ArticulationStyle::Mixed:
             return position % 2 == 0;
-            
-        case ArticulationStyle::Pattern: {
-            // Example pattern: staccato every third note
-            return position % 3 == 0;
-        }
-            
+        case ArticulationStyle::Accented:
+            return position % 2 == 0;
         case ArticulationStyle::Random:
-            return std::uniform_real_distribution<>(0.0, 1.0)(rng) < 0.5;
-            
-        default:
+            return getRandomDouble(0.0, 1.0) > 0.5;
+        case ArticulationStyle::Pattern:
+            return position % 4 == 0;
+        case ArticulationStyle::Normal:
+            return false;
+        case ArticulationStyle::AlternatingStaccato:
+            return position % 2 == 0;
+        case ArticulationStyle::OffbeatAccent:
+            return position % 2 != 0;
+        case ArticulationStyle::Custom:
             return false;
     }
+    return false;
 }
 
 void PatternTransformer::applySwingFeel(std::vector<Note>& notes) {
@@ -681,34 +661,157 @@ std::vector<RhythmStep> PatternTransformer::createSyncopatedPattern(
     return steps;
 }
 
+Pattern PatternTransformer::applyRhythmAndArticulation(
+    const Pattern& source,
+    TransformationType type,
+    RhythmPattern rhythm,
+    ArticulationStyle articulation,
+    int length)
+{
+    // First apply the transformation
+    Pattern transformed = transformPattern(source, type);
+    
+    // Then apply rhythm pattern
+    std::vector<Note> rhythmicNotes = applyRhythmPattern(transformed.notes, rhythm);
+    
+    // Finally apply articulation
+    std::vector<Note> articulatedNotes = applyArticulationStyle(rhythmicNotes, articulation);
+    
+    // Create final pattern
+    Pattern result = transformed;
+    result.notes = articulatedNotes;
+    result.length = length;
+    
+    return result;
+}
+
+std::vector<Note> PatternTransformer::applyArticulationStyle(
+    const std::vector<Note>& input,
+    ArticulationStyle style)
+{
+    std::vector<Note> notes = input;
+    for (size_t i = 0; i < notes.size(); ++i) {
+        notes[i].isStaccato = shouldBeStaccato(i, style);
+        
+        if (notes[i].isStaccato) {
+            // For staccato, make the note shorter but keep the same start time
+            double originalDuration = notes[i].duration;
+            notes[i].duration = originalDuration * 0.5; // 50% of original duration
+        }
+    }
+    
+    return notes;
+}
+
 std::vector<Note> PatternTransformer::applyRhythmPattern(
     const std::vector<Note>& input,
     RhythmPattern pattern)
 {
-    // First apply basic rhythm pattern
-    std::vector<Note> basicPattern = applyBasicRhythmPattern(input, pattern);
+    std::vector<int> accents;
+    std::vector<double> durations;
     
-    // Then apply specific pattern modifications
     switch (pattern) {
-        case RhythmPattern::Swing:
-            applySwingFeel(basicPattern);
+        case RhythmPattern::Regular:
+            accents = {2, 0, 1, 0};
+            durations = {1.0, 1.0, 1.0, 1.0};
             break;
             
-        case RhythmPattern::Syncopated: {
-            std::vector<int> accents = {2, 0, 1, 0, 1, 2, 0, 1};
-            std::vector<double> durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5, 0.5};
-            auto steps = createSyncopatedPattern(accents, durations);
-            return applyRhythmSteps(input, steps);
+        case RhythmPattern::Dotted:
+            accents = {2, 0};
+            durations = {1.5, 0.5};
+            break;
+            
+        case RhythmPattern::Swing:
+            accents = {2, 0};
+            durations = {1.67, 0.33};
+            break;
+            
+        case RhythmPattern::Syncopated:
+            accents = {2, 0, 1, 0, 1, 2, 0, 1};
+            durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 0.5, 0.5};
+            break;
+            
+        case RhythmPattern::Random: {
+            const int patternLength = 8;
+            std::uniform_int_distribution<> accentDist(0, 2);
+            std::uniform_real_distribution<> durationDist(0.5, 1.5);
+            
+            for (int i = 0; i < patternLength; ++i) {
+                accents.push_back(accentDist(rng));
+                durations.push_back(durationDist(rng));
+            }
+            break;
         }
             
         case RhythmPattern::Clave:
-            return applyClavePattern(input, isThreeTwoClave);
-            
-        default:
-            return basicPattern;
+            if (isThreeTwoClave) {
+                accents = {2, 0, 0, 2, 0, 0, 2, 0, 2, 0, 2, 0};
+                durations = {1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5};
+            } else {
+                accents = {2, 0, 2, 0, 0, 2, 0, 0, 2, 0, 0, 2};
+                durations = {1.0, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 0.5, 1.0};
+            }
+            break;
+
+        case RhythmPattern::LongShort:
+            accents = {2, 1};
+            durations = {1.5, 0.5};
+            break;
+
+        case RhythmPattern::ShortLong:
+            accents = {1, 2};
+            durations = {0.5, 1.5};
+            break;
+
+        case RhythmPattern::LongShortShort:
+            accents = {2, 1, 1};
+            durations = {1.5, 0.25, 0.25};
+            break;
+
+        case RhythmPattern::ShortShortLong:
+            accents = {1, 1, 2};
+            durations = {0.25, 0.25, 1.5};
+            break;
+
+        case RhythmPattern::DottedEighth:
+            accents = {2, 1};
+            durations = {1.5, 0.5};
+            break;
+
+        case RhythmPattern::Triplet:
+            accents = {2, 1, 1};
+            durations = {0.33, 0.33, 0.33};
+            break;
+
+        case RhythmPattern::Straight:
+            accents = {2, 1, 2, 1};
+            durations = {1.0, 1.0, 1.0, 1.0};
+            break;
+
+        case RhythmPattern::ThreeTwoClave:
+            accents = {2, 0, 2, 0, 2, 0, 0, 2, 0, 2};
+            durations = {1.0, 0.5, 1.0, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 1.0};
+            break;
+
+        case RhythmPattern::TwoThreeClave:
+            accents = {2, 0, 2, 0, 0, 2, 0, 2, 0, 2};
+            durations = {1.0, 0.5, 1.0, 0.5, 0.5, 1.0, 0.5, 1.0, 0.5, 1.0};
+            break;
+
+        case RhythmPattern::Shuffle:
+            accents = {2, 1, 2, 1};
+            durations = {0.75, 0.25, 0.75, 0.25};
+            break;
+
+        case RhythmPattern::Custom:
+            // Use default pattern for custom
+            accents = {2, 1, 2, 1};
+            durations = {1.0, 1.0, 1.0, 1.0};
+            break;
     }
     
-    return basicPattern;
+    auto steps = createSyncopatedPattern(accents, durations);
+    return applyRhythmSteps(input, steps);
 }
 
 std::vector<Note> PatternTransformer::applySambaPattern(const std::vector<Note>& input) {
@@ -773,4 +876,129 @@ std::vector<Note> PatternTransformer::applyClavePattern(const std::vector<Note>&
     std::vector<double> durations(16, 0.25); // 16 sixteenth notes
     auto steps = createSyncopatedPattern(accents, durations);
     return applyRhythmSteps(input, steps);
-} 
+}
+
+void PatternTransformer::logTransformationStart(TransformationType type, const std::vector<Note>& input) const {
+    PTLogger::log(LogLevel::Info, 
+                 "Starting transformation: " + PTLogger::transformationTypeToString(type) + 
+                 " with input: " + PTLogger::notesToString(input),
+                 __func__);
+}
+
+void PatternTransformer::logTransformationEnd(TransformationType type, const std::vector<Note>& output) const {
+    PTLogger::log(LogLevel::Info, 
+                 "Completed transformation: " + PTLogger::transformationTypeToString(type) + 
+                 " with output: " + PTLogger::notesToString(output),
+                 __func__);
+}
+
+void PatternTransformer::logPatternGeneration(const std::vector<Note>& result, int targetLength) const {
+    PTLogger::log(LogLevel::Info, 
+                 "Generated pattern with " + std::to_string(result.size()) + 
+                 " notes (target length: " + std::to_string(targetLength) + ")",
+                 __func__);
+}
+
+void PatternTransformer::logRhythmApplication(const std::vector<Note>& input, const std::vector<RhythmStep>& steps) const {
+    std::stringstream ss;
+    ss << "Applying rhythm to " << input.size() << " notes with " << steps.size() << " rhythm steps";
+    PTLogger::log(LogLevel::Info, ss.str(), __func__);
+}
+
+std::vector<Note> PatternTransformer::generatePattern(int targetLength)
+{
+    std::vector<Note> result;
+    result.reserve(static_cast<size_t>(targetLength));
+    
+    // If we have seed notes, use them as a basis
+    if (!seedNotes.empty()) {
+        result = seedNotes;
+    } else {
+        // Generate a simple pattern based on the scale
+        Note note;
+        note.pitch = currentScale.root;
+        note.startTime = 0.0f;
+        note.duration = 1.0f;
+        result.push_back(note);
+    }
+    
+    // Extend pattern to desired length
+    while (result.size() < static_cast<size_t>(targetLength)) {
+        Note newNote = result.back();
+        newNote.startTime += newNote.duration;
+        
+        // Randomly choose next pitch from scale
+        int steps = getRandomInt(-2, 2);
+        newNote.pitch = getNextScaleNote(newNote.pitch, steps);
+        
+        result.push_back(newNote);
+    }
+    
+    // Trim to exact length if needed
+    if (result.size() > static_cast<size_t>(targetLength)) {
+        result.resize(targetLength);
+    }
+    
+    return result;
+}
+
+std::vector<Note> PatternTransformer::applyTransformation(const std::vector<Note>& input, TransformationType type)
+{
+    logTransformationStart(type, input);
+    
+    std::vector<Note> result;
+    switch (type) {
+        case TransformationType::StepUp:
+            result = applyStepUp(input);
+            break;
+        case TransformationType::StepDown:
+            result = applyStepDown(input);
+            break;
+        case TransformationType::UpTwoDownOne:
+            result = applyUpTwoDownOne(input);
+            break;
+        case TransformationType::SkipOne:
+            result = applySkipOne(input);
+            break;
+        case TransformationType::Arch:
+            result = applyArch(input);
+            break;
+        case TransformationType::Pendulum:
+            result = applyPendulum(input);
+            break;
+        case TransformationType::PowerChord:
+            result = applyPowerChord(input);
+            break;
+        case TransformationType::RandomFree:
+            result = applyRandomFree(input);
+            break;
+        case TransformationType::RandomInKey:
+            result = applyRandomInKey(input);
+            break;
+        case TransformationType::RandomRhythmic:
+            result = applyRandomRhythmic(input);
+            break;
+        case TransformationType::Invert:
+            result = applyInversion(input);
+            break;
+        case TransformationType::Mirror:
+            result = applyMirror(input);
+            break;
+        case TransformationType::Retrograde:
+            result = applyRetrograde(input);
+            break;
+    }
+    
+    logTransformationEnd(type, result);
+    return result;
+}
+
+int PatternTransformer::getRandomInt(int min, int max) {
+    std::uniform_int_distribution<int> dist(min, max);
+    return dist(rng);
+}
+
+double PatternTransformer::getRandomDouble(double min, double max) {
+    std::uniform_real_distribution<double> dist(min, max);
+    return dist(rng);
+}

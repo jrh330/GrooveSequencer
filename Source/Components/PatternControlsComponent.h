@@ -34,6 +34,7 @@ private:
     
     // Pattern data
     Pattern currentPattern;
+    double currentHumanizeValue{0.0};
     
     // Helper methods
     void initializeTransformationSelector();

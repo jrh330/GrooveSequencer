@@ -1,29 +1,46 @@
 #include "PluginProcessor.h"
-#include "PluginEditor.h"
-#include <cstdint>
+
+namespace IDs {
+    const juce::String tempo{"tempo"};
+    const juce::String gridSize{"gridSize"};
+    const juce::String length{"length"};
+}
 
 GrooveSequencerAudioProcessor::GrooveSequencerAudioProcessor()
     : AudioProcessor(BusesProperties()
         .withInput("Input", juce::AudioChannelSet::stereo(), true)
-        .withOutput("Output", juce::AudioChannelSet::stereo(), true))
+        .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+      state(*this, nullptr, "Parameters",
+            {
+                std::make_unique<juce::AudioParameterFloat>("tempo", "Tempo", 40.0f, 300.0f, 120.0f),
+                std::make_unique<juce::AudioParameterInt>("gridSize", "Grid Size", 1, 32, 16),
+                std::make_unique<juce::AudioParameterInt>("length", "Length", 1, 64, 16)
+            })
 {
-    // Initialize default pattern
-    currentPattern.length = 16;
-    currentPattern.tempo = 120.0;
-    currentPattern.gridSize = 0.25; // 16th notes
+    tempoParam = state.getRawParameterValue("tempo");
+    gridSizeParam = state.getRawParameterValue("gridSize");
+    lengthParam = state.getRawParameterValue("length");
+    
+    state.addParameterListener("tempo", this);
+    state.addParameterListener("gridSize", this);
+    state.addParameterListener("length", this);
 }
 
 GrooveSequencerAudioProcessor::~GrooveSequencerAudioProcessor()
 {
-    stopAllNotes();
+    state.removeParameterListener("tempo", this);
+    state.removeParameterListener("gridSize", this);
+    state.removeParameterListener("length", this);
+    
+    if (playing)
+        midiBuffer.clear();
 }
 
-void GrooveSequencerAudioProcessor::prepareToPlay(double newSampleRate, int /*samplesPerBlock*/)
+void GrooveSequencerAudioProcessor::prepareToPlay(double newSampleRate, int samplesPerBlock)
 {
     sampleRate = newSampleRate;
-    currentStep = 0;
-    lastNoteOnTimestamp = 0;
-    stopAllNotes();
+    floatBuffer.setSize(2, samplesPerBlock);
+    updatePlaybackPosition(0);
 }
 
 void GrooveSequencerAudioProcessor::releaseResources()
@@ -33,264 +50,174 @@ void GrooveSequencerAudioProcessor::releaseResources()
 
 bool GrooveSequencerAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    // Only support stereo
-    if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
-        return false;
-
-    // Input layout must match output layout
-    return layouts.getMainInputChannelSet() == layouts.getMainOutputChannelSet();
+    return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
 }
 
-void GrooveSequencerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer,
-                                               juce::MidiBuffer& midiMessages)
+void GrooveSequencerAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
-    juce::ScopedNoDenormals noDenormals;
-    
-    // Clear output buffers
     buffer.clear();
     midiMessages.clear();
     
-    // Get playhead position
-    if (auto* playHead = getPlayHead())
+    if (!playing)
+        return;
+        
+    const auto numSamples = buffer.getNumSamples();
+    updatePlaybackPosition(numSamples);
+    sendNoteEvents();
+}
+
+void GrooveSequencerAudioProcessor::updatePlaybackPosition(int numSamples)
+{
+    if (!playing)
+        return;
+        
+    const double tempo = static_cast<double>(*tempoParam);
+    samplesPerBeat = static_cast<int>(60.0 * sampleRate / tempo);
+    
+    currentPosition += static_cast<double>(numSamples) / static_cast<double>(samplesPerBeat);
+    
+    const int gridSize = static_cast<int>(*gridSizeParam);
+    if (currentPosition >= gridSize)
     {
-        if (auto positionInfo = playHead->getPosition())
+        if (loopMode)
+            currentPosition = std::fmod(currentPosition, static_cast<double>(gridSize));
+        else
+            stopPlayback();
+    }
+}
+
+void GrooveSequencerAudioProcessor::sendNoteEvents()
+{
+    const juce::ScopedLock sl(patternLock);
+    
+    const int step = static_cast<int>(currentPosition);
+    if (step != currentStep)
+    {
+        currentStep = step;
+        stopAllNotes();
+        
+        if (step < currentPattern.notes.size())
         {
-            updatePlaybackPosition(*positionInfo);
+            const auto& note = currentPattern.notes[step];
+            if (note.isValid())
+            {
+                const int velocity = static_cast<int>(note.velocity * velocityScale * 127.0f);
+                const int channel = 1;
+                const int noteNumber = note.pitch;
+                
+                midiBuffer.addEvent(juce::MidiMessage::noteOn(channel, noteNumber, static_cast<uint8>(velocity)), 0);
+                
+                const int noteDuration = static_cast<int>(samplesPerBeat * gateLength);
+                midiBuffer.addEvent(juce::MidiMessage::noteOff(channel, noteNumber), noteDuration);
+            }
         }
     }
-    
-    // Process MIDI
-    for (const auto metadata : midiMessages)
-    {
-        handleIncomingMidiMessage(metadata.getMessage());
-    }
-    
-    // Update pattern playback
-    if (playing)
-    {
-        processNextStep();
-    }
 }
 
-void GrooveSequencerAudioProcessor::processBlock(juce::AudioBuffer<double>& buffer,
-                                               juce::MidiBuffer& midiMessages)
+void GrooveSequencerAudioProcessor::stopAllNotes()
 {
-    // Convert double buffer to float for processing
-    const int numChannels = buffer.getNumChannels();
-    const int numSamples = buffer.getNumSamples();
-    
-    // Ensure float buffer is large enough
-    floatBuffer.setSize(numChannels, numSamples, false, false, true);
-    
-    // Copy double buffer to float buffer
-    for (int ch = 0; ch < numChannels; ++ch)
-    {
-        auto* source = buffer.getReadPointer(ch);
-        auto* dest = floatBuffer.getWritePointer(ch);
-        for (int i = 0; i < numSamples; ++i)
-            dest[i] = static_cast<float>(source[i]);
-    }
-    
-    // Process the float buffer
-    processBlock(floatBuffer, midiMessages);
-    
-    // Copy back to double buffer
-    for (int ch = 0; ch < numChannels; ++ch)
-    {
-        auto* source = floatBuffer.getReadPointer(ch);
-        auto* dest = buffer.getWritePointer(ch);
-        for (int i = 0; i < numSamples; ++i)
-            dest[i] = source[i];
-    }
+    for (int channel = 1; channel <= 16; ++channel)
+        for (int note = 0; note < 128; ++note)
+            midiBuffer.addEvent(juce::MidiMessage::noteOff(channel, note), 0);
 }
 
-void GrooveSequencerAudioProcessor::updatePlaybackPosition(const juce::AudioPlayHead::PositionInfo& positionInfo)
+void GrooveSequencerAudioProcessor::startPlayback()
 {
-    if (syncToHost)
-    {
-        if (auto bpm = positionInfo.getBpm())
-            setTempo(*bpm);
-        
-        if (auto ppqPosition = positionInfo.getPpqPosition())
-            currentPosition = *ppqPosition;
-    }
+    currentPosition = 0.0;
+    currentStep = -1;
+    playing = true;
+}
+
+void GrooveSequencerAudioProcessor::stopPlayback()
+{
+    playing = false;
+    stopAllNotes();
+}
+
+void GrooveSequencerAudioProcessor::setPattern(const Pattern& pattern)
+{
+    const juce::ScopedLock sl(patternLock);
+    currentPattern = pattern;
+    patternModified = true;
+}
+
+void GrooveSequencerAudioProcessor::setTransformationType(TransformationType type)
+{
+    const juce::ScopedLock sl(patternLock);
+    auto transformed = transformer.transformPattern(currentPattern, type);
+    currentPattern = transformed;
+    patternModified = true;
+}
+
+void GrooveSequencerAudioProcessor::setRhythmPattern(RhythmPattern pattern)
+{
+    transformer.setRhythmPattern(pattern);
+}
+
+void GrooveSequencerAudioProcessor::setArticulationStyle(ArticulationStyle style)
+{
+    transformer.setArticulationStyle(style);
+}
+
+void GrooveSequencerAudioProcessor::generateNewPattern(int length)
+{
+    const juce::ScopedLock sl(patternLock);
+    auto pattern = transformer.generatePattern(TransformationType::RandomInKey, length);
+    currentPattern = pattern;
+    patternModified = true;
+}
+
+void GrooveSequencerAudioProcessor::transformCurrentPattern()
+{
+    const juce::ScopedLock sl(patternLock);
+    auto transformed = transformer.transformPattern(currentPattern, TransformationType::RandomInKey);
+    currentPattern = transformed;
+    patternModified = true;
+}
+
+void GrooveSequencerAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    if (parameterID == "tempo")
+        updatePlaybackPosition(0);
 }
 
 void GrooveSequencerAudioProcessor::handleIncomingMidiMessage(const juce::MidiMessage& message)
 {
     if (message.isNoteOn())
     {
-        handleNoteOn(message);
+        // Store note info for potential pattern input
+        const int noteNumber = message.getNoteNumber();
+        const float velocity = message.getFloatVelocity();
+        
+        // Example: Add note to pattern at current position
+        Note newNote;
+        newNote.pitch = noteNumber;
+        newNote.velocity = velocity;
+        newNote.startTime = currentPosition;
+        newNote.duration = 1.0;  // Default duration
+        
+        const juce::ScopedLock sl(patternLock);
+        if (currentStep < currentPattern.notes.size())
+            currentPattern.notes[currentStep] = newNote;
+        else
+            currentPattern.notes.push_back(newNote);
+            
+        patternModified = true;
     }
-    else if (message.isNoteOff())
-    {
-        handleNoteOff(message);
-    }
 }
 
-void GrooveSequencerAudioProcessor::handleNoteOn(const juce::MidiMessage& noteOn)
+void GrooveSequencerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    lastNoteOnTimestamp = static_cast<juce::uint32>(noteOn.getTimeStamp());
-    // TODO: Implement note triggering
+    auto treeState = state.copyState();
+    std::unique_ptr<juce::XmlElement> xml(treeState.createXml());
+    copyXmlToBinary(*xml, destData);
 }
 
-void GrooveSequencerAudioProcessor::handleNoteOff(const juce::MidiMessage& /*noteOff*/)
+void GrooveSequencerAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    // TODO: Implement note off handling
-}
-
-void GrooveSequencerAudioProcessor::processNextStep()
-{
-    const juce::ScopedLock sl(playbackLock);
-    
-    // Check if we're within loop points
-    if (currentStep < loopStartStep || currentStep > loopEndStep)
-    {
-        currentStep = loopStartStep;
-        return;
-    }
-    
-    // Find notes that start on this step
-    for (const auto& note : currentPattern.notes)
-    {
-        double noteStartStep = note.startTime / currentPattern.gridSize;
-        if (std::abs(noteStartStep - currentStep) < 0.001) // Allow for floating point comparison
-        {
-            triggerNote(note);
-        }
-    }
-    
-    // Move to next step
-    currentStep++;
-    if (currentStep > loopEndStep)
-        currentStep = loopStartStep;
-}
-
-void GrooveSequencerAudioProcessor::triggerNote(const Note& note)
-{
-    if (note.isRest) return;
-    
-    // Calculate actual duration based on gate length and staccato
-    double actualDuration = note.duration;
-    if (note.isStaccato)
-        actualDuration *= 0.5;
-    actualDuration *= gateLength;
-    
-    // Calculate velocity based on accent and velocity scale
-    int velocity = note.velocity;
-    if (note.accent > 0)
-        velocity = juce::jmin(127, static_cast<int>(velocity * (1.0 + note.accent * 0.2)));
-    velocity = static_cast<int>(velocity * velocityScale);
-    
-    // Send note on
-    juce::MidiMessage noteOn = juce::MidiMessage::noteOn(1, note.pitch, static_cast<float>(velocity));
-    noteOn.setTimeStamp(juce::Time::getMillisecondCounterHiRes());
-    lastNoteOnTimestamp = static_cast<juce::uint32>(noteOn.getTimeStamp());
-    
-    // Schedule note off
-    double noteOffTime = actualDuration * (60.0 / currentPattern.tempo) * 1000.0; // Convert to milliseconds
-    juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, note.pitch);
-    noteOff.setTimeStamp(lastNoteOnTimestamp + noteOffTime);
-    
-    activeNotes.push_back(note.pitch);
-}
-
-void GrooveSequencerAudioProcessor::stopAllNotes()
-{
-    const juce::ScopedLock sl(playbackLock);
-    
-    for (int note : activeNotes)
-    {
-        juce::MidiMessage noteOff = juce::MidiMessage::noteOff(1, note);
-        noteOff.setTimeStamp(juce::Time::getMillisecondCounterHiRes());
-    }
-    
-    activeNotes.clear();
-}
-
-void GrooveSequencerAudioProcessor::startPlayback()
-{
-    const juce::ScopedLock sl(playbackLock);
-    currentStep = loopStartStep;
-    playing = true;
-}
-
-void GrooveSequencerAudioProcessor::stopPlayback()
-{
-    const juce::ScopedLock sl(playbackLock);
-    playing = false;
-    stopAllNotes();
-}
-
-void GrooveSequencerAudioProcessor::setTempo(double newTempo)
-{
-    const juce::ScopedLock sl(playbackLock);
-    currentPattern.tempo = newTempo;
-}
-
-void GrooveSequencerAudioProcessor::setLoopPoints(int startStep, int endStep)
-{
-    const juce::ScopedLock sl(playbackLock);
-    loopStartStep = juce::jlimit(0, currentPattern.length - 1, startStep);
-    loopEndStep = juce::jlimit(loopStartStep, currentPattern.length - 1, endStep);
-}
-
-void GrooveSequencerAudioProcessor::setPattern(const Pattern& newPattern)
-{
-    const juce::ScopedLock sl(playbackLock);
-    currentPattern = newPattern;
-    currentStep = loopStartStep;
-}
-
-void GrooveSequencerAudioProcessor::clearPattern()
-{
-    const juce::ScopedLock sl(playbackLock);
-    currentPattern.notes.clear();
-    stopAllNotes();
-}
-
-void GrooveSequencerAudioProcessor::setGridSize(double size)
-{
-    const juce::ScopedLock sl(playbackLock);
-    currentPattern.gridSize = size;
-}
-
-void GrooveSequencerAudioProcessor::setSwingAmount(double amount)
-{
-    juce::ScopedLock sl(playbackLock);
-    swingAmount = juce::jlimit(0.0, 1.0, amount);
-}
-
-void GrooveSequencerAudioProcessor::setVelocityScale(double scale)
-{
-    juce::ScopedLock sl(playbackLock);
-    velocityScale = juce::jlimit(0.0, 2.0, scale);
-}
-
-void GrooveSequencerAudioProcessor::setGateLength(double length)
-{
-    juce::ScopedLock sl(playbackLock);
-    gateLength = juce::jlimit(0.1, 1.0, length);
-}
-
-void GrooveSequencerAudioProcessor::playbackStarted()
-{
-    juce::ScopedLock sl(playbackLock);
-    currentStep = 0;
-    activeNotes.clear();
-}
-
-void GrooveSequencerAudioProcessor::playbackStopped()
-{
-    juce::ScopedLock sl(playbackLock);
-    currentStep = 0;
-    // Send note-offs for any active notes
-    juce::MidiBuffer tempMidiBuffer;
-    for (int note : activeNotes)
-    {
-        tempMidiBuffer.addEvent(juce::MidiMessage::noteOff(1, note, 0.0f), 0);
-    }
-    activeNotes.clear();
+    std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
+    if (xmlState.get() != nullptr)
+        state.replaceState(juce::ValueTree::fromXml(*xmlState));
 }
 
 juce::AudioProcessorEditor* GrooveSequencerAudioProcessor::createEditor()
@@ -298,38 +225,53 @@ juce::AudioProcessorEditor* GrooveSequencerAudioProcessor::createEditor()
     return new juce::GenericAudioProcessorEditor(*this);
 }
 
-void GrooveSequencerAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
+void GrooveSequencerAudioProcessor::setTempo(double newTempo)
 {
-    state = juce::ValueTree("GrooveSequencer");
-    state.setProperty("swingAmount", swingAmount, nullptr);
-    state.setProperty("velocityScale", velocityScale, nullptr);
-    state.setProperty("gateLength", gateLength, nullptr);
-    state.setProperty("syncToHost", syncToHost, nullptr);
-    state.setProperty("articulationStyle", static_cast<int>(articulationStyle), nullptr);
-    
-    std::unique_ptr<juce::XmlElement> xml(state.createXml());
-    copyXmlToBinary(*xml, destData);
+    state.getParameter("tempo")->setValueNotifyingHost(newTempo / 300.0);
 }
 
-void GrooveSequencerAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
+void GrooveSequencerAudioProcessor::setSwingAmount(double amount)
 {
-    std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
+    swingAmount = juce::jlimit(0.0, 1.0, amount);
+}
+
+void GrooveSequencerAudioProcessor::setVelocityScale(double scale)
+{
+    velocityScale = juce::jlimit(0.0, 2.0, scale);
+}
+
+void GrooveSequencerAudioProcessor::setGateLength(double length)
+{
+    gateLength = juce::jlimit(0.0, 1.0, length);
+}
+
+void GrooveSequencerAudioProcessor::updateGridCell(int row, int col, bool active, float velocity, int accent, bool isStaccato)
+{
+    const juce::ScopedLock sl(patternLock);
     
-    if (xmlState != nullptr)
-    {
-        state = juce::ValueTree::fromXml(*xmlState);
-        
-        swingAmount = state.getProperty("swingAmount", 0.0);
-        velocityScale = state.getProperty("velocityScale", 1.0);
-        gateLength = state.getProperty("gateLength", 0.8);
-        syncToHost = state.getProperty("syncToHost", false);
-        int artStyle = state.getProperty("articulationStyle", 0);
-        articulationStyle = static_cast<ArticulationStyle>(artStyle);
+    // Calculate the note index based on row and column
+    const int noteIndex = row * static_cast<int>(*gridSizeParam) + col;
+    
+    // Ensure the pattern has enough notes
+    while (currentPattern.notes.size() <= static_cast<size_t>(noteIndex)) {
+        Note newNote;
+        newNote.pitch = 60 + row; // Middle C + row offset
+        newNote.startTime = currentPattern.notes.size() * currentGridSize;
+        newNote.duration = currentGridSize;
+        currentPattern.notes.push_back(newNote);
     }
+    
+    // Update the note properties
+    Note& note = currentPattern.notes[noteIndex];
+    note.active = active;
+    note.velocity = velocity;
+    note.accent = accent;
+    note.isStaccato = isStaccato;
+    
+    patternModified = true;
 }
 
-// This creates new instances of the plugin
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new GrooveSequencerAudioProcessor();
-} 
+}
