@@ -16,16 +16,17 @@ FetchContent_MakeAvailable(juce)
 
 # Add JUCE modules
 juce_add_plugin(GrooveSequencer
-    VERSION 1.0.0
-    COMPANY_NAME "Your Company"
-    IS_SYNTH FALSE
+    VERSION 2.22
+    COMPANY_NAME "JHAudio"
+    BUNDLE_ID "com.jhaudio.groovesequencer"
+    IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
-    IS_MIDI_EFFECT TRUE
+    IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS TRUE
     COPY_PLUGIN_AFTER_BUILD TRUE
-    PLUGIN_MANUFACTURER_CODE Ycom
-    PLUGIN_CODE Grsq
+    PLUGIN_MANUFACTURER_CODE JHAu
+    PLUGIN_CODE GSeq
     FORMATS AU VST3 Standalone
     PRODUCT_NAME "Groove Sequencer"
 )

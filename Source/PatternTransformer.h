@@ -201,7 +201,7 @@ private:
     // Rhythm methods
     [[nodiscard]] std::vector<Note> applyRhythmPattern(const std::vector<Note>& input, RhythmPattern pattern);
     [[nodiscard]] std::vector<Note> applyArticulationStyle(const std::vector<Note>& input, ArticulationStyle style);
-    [[nodiscard]] std::vector<RhythmStep> createSyncopatedPattern(const std::vector<int>& accents, const std::vector<double>& durations);
+    [[nodiscard]] std::vector<RhythmStep> createSyncopatedPattern(int length, bool isThreeTwoClave);
     [[nodiscard]] double calculateNoteDuration(int position, RhythmPattern pattern);
     [[nodiscard]] bool shouldBeStaccato(int position, ArticulationStyle style);
     void applySwingFeel(std::vector<Note>& notes);

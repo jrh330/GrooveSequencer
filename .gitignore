@@ -1,11 +1,14 @@
 # Build directories
 build/
-out/
-cmake-build-*/
+build_new/
+*_artefacts/
 
 # IDE specific files
-.idea/
 .vscode/
+.idea/
+*.xcworkspace/
+*.xcodeproj/
+*.vs/
 *.swp
 *.swo
 .DS_Store
@@ -48,7 +51,6 @@ Testing/
 CTestTestfile.cmake
 
 # JUCE-specific
-Builds/
 JuceLibraryCode/
 *.buildinfo
 
@@ -77,4 +79,18 @@ JuceLibraryCode/
 .LSOverride
 
 # Temporary files
-*~ 
+*~
+
+# Audio plugin files
+*.component/
+*.vst/
+*.vst3/
+*.aax/
+*.au/
+*.bundle/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json 

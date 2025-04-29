@@ -1,14 +1,15 @@
 #pragma once
 
-#include <juce_audio_processors/juce_audio_processors.h>
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <JuceHeader.h>
+#include "PluginProcessor.h"
+#include "Components/GridSequencerComponent.h"
+#include "Components/TransportComponent.h"
+#include "Components/PatternControlsComponent.h"
+#include "Components/PatternBrowserComponent.h"
+#include "GrooveSequencerLookAndFeel.h"
 
-// Forward declarations to break circular dependencies
-class GrooveSequencerAudioProcessor;
-class GridSequencerComponent;
-class GrooveSequencerLookAndFeel;
-
-class GrooveSequencerAudioProcessorEditor : public juce::AudioProcessorEditor
+class GrooveSequencerAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                          public juce::Timer
 {
 public:
     explicit GrooveSequencerAudioProcessorEditor(GrooveSequencerAudioProcessor&);
@@ -16,44 +17,77 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void timerCallback() override;
 
 private:
-    GrooveSequencerAudioProcessor& audioProcessor;
+    GrooveSequencerAudioProcessor& processor;
     std::unique_ptr<GrooveSequencerLookAndFeel> lookAndFeel;
+    
+    // Main components
     std::unique_ptr<GridSequencerComponent> gridSequencer;
     
     // Transport controls
-    juce::TextButton playButton{"Play"};
-    juce::TextButton stopButton{"Stop"};
-    juce::Slider tempoSlider;
+    juce::TextButton playStopButton;
+    juce::TextButton loopButton;
     juce::Label tempoLabel;
+    juce::Slider tempoSlider;
+    juce::Label swingLabel;
+    juce::Slider swingSlider;
     
     // Grid controls
-    juce::Slider swingSlider;
-    juce::Label swingLabel;
-    juce::Slider velocityScaleSlider;
-    juce::Label velocityScaleLabel;
-    juce::Slider gateLengthSlider;
-    juce::Label gateLengthLabel;
-    
-    // Grid size controls
-    juce::Label gridSizeLabel{"", "Grid Size"};
+    juce::Label gridSizeLabel;
     juce::ComboBox gridSizeSelector;
-    juce::ToggleButton tripletButton{"Triplet"};
-    juce::ToggleButton dottedButton{"Dotted"};
+    juce::Label divisionLabel;
+    juce::ComboBox divisionSelector;
+    juce::Label lengthLabel;
+    juce::Slider lengthSlider;
     
     // Articulation controls
-    juce::Label articulationLabel{"", "Articulation"};
-    juce::ComboBox articulationSelector;
+    juce::Label velocityLabel;
+    juce::Slider velocityScaleSlider;
+    juce::Label gateLengthLabel;
+    juce::Slider gateLengthSlider;
+    juce::ToggleButton staccatoButton;
+    juce::ToggleButton accentButton;
     
-    // Transport controls
-    juce::ToggleButton syncButton{"Sync to Host"};
+    // Pattern controls
+    juce::Label transformationLabel;
+    juce::ComboBox transformationTypeSelector;
+    juce::Label rhythmLabel;
+    juce::ComboBox rhythmPatternSelector;
+    juce::Label articulationLabel;
+    juce::ComboBox articulationStyleSelector;
+    juce::TextButton generateButton;
+    juce::TextButton transformButton;
     
+    // File controls
+    juce::TextButton saveButton;
+    juce::TextButton loadButton;
+    juce::Label midiInputLabel;
+    juce::TextEditor midiMonitor;
+    
+    // Parameter attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tempoAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> swingAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> velocityAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gateAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lengthAttachment;
+    
+    // Setup methods
     void setupTransportControls();
-    void setupGridSizeControls();
     void setupGridControls();
     void setupArticulationControls();
+    void setupPatternControls();
+    void setupFileControls();
+    
+    // Update methods
     void updateGridSize();
-
+    void updatePlayState();
+    void updateMidiMonitor(const juce::String& message);
+    
+    // Event handlers
+    void handleComboBoxChange(juce::ComboBox* comboBox);
+    void handleButtonClick(juce::Button* button);
+    
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GrooveSequencerAudioProcessorEditor)
 }; 

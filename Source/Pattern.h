@@ -3,6 +3,31 @@
 
 #include <JuceHeader.h>
 #include <vector>
+#include <stdexcept>
+
+// Constants for validation
+namespace PatternConstants {
+    constexpr int MIN_MIDI_NOTE = 0;
+    constexpr int MAX_MIDI_NOTE = 127;
+    constexpr float MIN_VELOCITY = 0.0f;
+    constexpr float MAX_VELOCITY = 127.0f;
+    constexpr float MIN_TIME = 0.0f;
+    constexpr float MIN_DURATION = 0.001f;
+    constexpr int MIN_ACCENT = 0;
+    constexpr int MAX_ACCENT = 2;
+    constexpr int MIN_LENGTH = 1;
+    constexpr int MAX_LENGTH = 128;
+    constexpr double MIN_TEMPO = 20.0;
+    constexpr double MAX_TEMPO = 300.0;
+    constexpr double MIN_GRID_SIZE = 0.0625; // 1/64 note
+    constexpr double MAX_GRID_SIZE = 4.0;    // whole note
+}
+
+class InvalidNoteException : public std::runtime_error {
+public:
+    explicit InvalidNoteException(const std::string& message) 
+        : std::runtime_error(message) {}
+};
 
 struct Note {
     int pitch{60};            // MIDI note number (0-127)
@@ -23,7 +48,9 @@ struct Note {
         , duration(d)
         , accent(a)
         , active(act)
-    {}
+    {
+        validate();
+    }
     
     bool operator==(const Note& other) const {
         return pitch == other.pitch &&
@@ -40,15 +67,37 @@ struct Note {
         return !(*this == other);
     }
     
-    [[nodiscard]] bool isValid() const {
-        return pitch >= 0 && pitch < 128 &&
-               velocity >= 0.0f && velocity <= 127.0f &&
-               startTime >= 0.0f &&
-               duration > 0.0f &&
-               accent >= 0 && accent <= 2;
+    void validate() const {
+        using namespace PatternConstants;
+        
+        if (pitch < MIN_MIDI_NOTE || pitch > MAX_MIDI_NOTE) {
+            throw InvalidNoteException("Invalid MIDI note number: " + std::to_string(pitch));
+        }
+        if (velocity < MIN_VELOCITY || velocity > MAX_VELOCITY) {
+            throw InvalidNoteException("Invalid velocity: " + std::to_string(velocity));
+        }
+        if (startTime < MIN_TIME) {
+            throw InvalidNoteException("Invalid start time: " + std::to_string(startTime));
+        }
+        if (duration < MIN_DURATION) {
+            throw InvalidNoteException("Invalid duration: " + std::to_string(duration));
+        }
+        if (accent < MIN_ACCENT || accent > MAX_ACCENT) {
+            throw InvalidNoteException("Invalid accent: " + std::to_string(accent));
+        }
+    }
+    
+    [[nodiscard]] bool isValid() const noexcept {
+        try {
+            validate();
+            return true;
+        } catch (const InvalidNoteException&) {
+            return false;
+        }
     }
     
     [[nodiscard]] juce::var toVar() const {
+        validate(); // Ensure note is valid before serializing
         auto obj = std::make_unique<juce::DynamicObject>();
         obj->setProperty("pitch", pitch);
         obj->setProperty("velocity", velocity);
@@ -64,41 +113,59 @@ struct Note {
     static Note fromVar(const juce::var& v) {
         Note note;
         if (auto* obj = v.getDynamicObject()) {
-            note.pitch = obj->getProperty("pitch");
-            note.velocity = obj->getProperty("velocity");
-            note.startTime = obj->getProperty("startTime");
-            note.duration = obj->getProperty("duration");
-            note.accent = obj->getProperty("accent");
-            note.active = obj->getProperty("active");
-            note.isStaccato = obj->getProperty("isStaccato");
-            note.isRest = obj->getProperty("isRest");
+            note.pitch = static_cast<int>(obj->getProperty("pitch"));
+            note.velocity = static_cast<float>(static_cast<double>(obj->getProperty("velocity")));
+            note.startTime = static_cast<float>(static_cast<double>(obj->getProperty("startTime")));
+            note.duration = static_cast<float>(static_cast<double>(obj->getProperty("duration")));
+            note.accent = static_cast<int>(obj->getProperty("accent"));
+            note.active = static_cast<bool>(obj->getProperty("active"));
+            note.isStaccato = static_cast<bool>(obj->getProperty("isStaccato"));
+            note.isRest = static_cast<bool>(obj->getProperty("isRest"));
+            note.validate();
         }
         return note;
     }
 };
 
-struct Pattern {
-    std::vector<Note> notes;
-    int length{16};           // Pattern length in beats
-    double tempo{120.0};      // Tempo in BPM
-    double gridSize{0.25};    // Grid size in beats (0.25 = 16th notes)
-    
+class Pattern {
+public:
     Pattern(int len = 16, double tmp = 120.0, double grid = 0.25)
-        : length(len)
-        , tempo(tmp)
-        , gridSize(grid)
+        : length_(validateLength(len))
+        , tempo_(validateTempo(tmp))
+        , gridSize_(validateGridSize(grid))
     {
-        notes.reserve(static_cast<size_t>(length));
+        notes_.reserve(static_cast<size_t>(length_));
+    }
+    
+    // Getters
+    [[nodiscard]] int getLength() const noexcept { return length_; }
+    [[nodiscard]] double getTempo() const noexcept { return tempo_; }
+    [[nodiscard]] double getGridSize() const noexcept { return gridSize_; }
+    [[nodiscard]] const std::vector<Note>& getNotes() const noexcept { return notes_; }
+    std::vector<Note>& getNotes() noexcept { return notes_; }  // Non-const access for modifications
+    
+    // Setters with validation
+    void setLength(int len) {
+        length_ = validateLength(len);
+        notes_.reserve(static_cast<size_t>(length_));
+    }
+    
+    void setTempo(double tmp) {
+        tempo_ = validateTempo(tmp);
+    }
+    
+    void setGridSize(double grid) {
+        gridSize_ = validateGridSize(grid);
     }
     
     [[nodiscard]] juce::var toVar() const {
         auto obj = std::make_unique<juce::DynamicObject>();
-        obj->setProperty("length", length);
-        obj->setProperty("tempo", tempo);
-        obj->setProperty("gridSize", gridSize);
+        obj->setProperty("length", length_);
+        obj->setProperty("tempo", tempo_);
+        obj->setProperty("gridSize", gridSize_);
         
         juce::Array<juce::var> notesArray;
-        for (const auto& note : notes) {
+        for (const auto& note : notes_) {
             notesArray.add(note.toVar());
         }
         obj->setProperty("notes", notesArray);
@@ -109,14 +176,14 @@ struct Pattern {
     static Pattern fromVar(const juce::var& v) {
         Pattern pattern;
         if (auto* obj = v.getDynamicObject()) {
-            pattern.length = obj->getProperty("length");
-            pattern.tempo = obj->getProperty("tempo");
-            pattern.gridSize = obj->getProperty("gridSize");
+            pattern.setLength(static_cast<int>(obj->getProperty("length")));
+            pattern.setTempo(static_cast<double>(obj->getProperty("tempo")));
+            pattern.setGridSize(static_cast<double>(obj->getProperty("gridSize")));
             
             if (auto* notesArray = obj->getProperty("notes").getArray()) {
-                pattern.notes.reserve(static_cast<size_t>(notesArray->size()));
+                pattern.notes_.reserve(static_cast<size_t>(notesArray->size()));
                 for (const auto& noteVar : *notesArray) {
-                    pattern.notes.push_back(Note::fromVar(noteVar));
+                    pattern.notes_.push_back(Note::fromVar(noteVar));
                 }
             }
         }
@@ -124,49 +191,79 @@ struct Pattern {
     }
     
     void removeNote(size_t index) {
-        if (index < notes.size()) {
-            notes.erase(notes.begin() + static_cast<std::ptrdiff_t>(index));
+        if (index < notes_.size()) {
+            notes_.erase(notes_.begin() + static_cast<std::ptrdiff_t>(index));
         }
     }
     
     void addNote(const Note& note) {
-        notes.push_back(note);
+        note.validate();
+        notes_.push_back(note);
     }
     
     void clear() {
-        notes.clear();
+        notes_.clear();
     }
     
-    [[nodiscard]] bool isEmpty() const {
-        return notes.empty();
+    [[nodiscard]] bool isEmpty() const noexcept {
+        return notes_.empty();
     }
     
-    [[nodiscard]] size_t size() const {
-        return notes.size();
+    [[nodiscard]] size_t size() const noexcept {
+        return notes_.size();
     }
 
-    [[nodiscard]] size_t getNoteCount() const {
-        return notes.size();
+    [[nodiscard]] size_t getNoteCount() const noexcept {
+        return notes_.size();
     }
 
-    [[nodiscard]] bool validate() const {
-        // Check pattern parameters
-        if (length <= 0 || tempo <= 0.0 || gridSize <= 0.0) {
+    [[nodiscard]] bool validate() const noexcept {
+        try {
+            validateLength(length_);
+            validateTempo(tempo_);
+            validateGridSize(gridSize_);
+            
+            for (const auto& note : notes_) {
+                note.validate();
+                if (note.startTime >= static_cast<float>(length_) || 
+                    note.startTime + note.duration > static_cast<float>(length_)) {
+                    return false;
+                }
+            }
+            return true;
+        } catch (...) {
             return false;
         }
+    }
 
-        // Check all notes
-        for (const auto& note : notes) {
-            if (!note.isValid()) {
-                return false;
-            }
-            // Additional pattern-specific validation
-            if (note.startTime >= static_cast<float>(length) || 
-                note.startTime + note.duration > static_cast<float>(length)) {
-                return false;
-            }
+private:
+    std::vector<Note> notes_;
+    int length_{16};           // Pattern length in beats
+    double tempo_{120.0};      // Tempo in BPM
+    double gridSize_{0.25};    // Grid size in beats (0.25 = 16th notes)
+
+    static int validateLength(int len) {
+        using namespace PatternConstants;
+        if (len < MIN_LENGTH || len > MAX_LENGTH) {
+            throw std::invalid_argument("Invalid pattern length: " + std::to_string(len));
         }
-        return true;
+        return len;
+    }
+    
+    static double validateTempo(double tmp) {
+        using namespace PatternConstants;
+        if (tmp < MIN_TEMPO || tmp > MAX_TEMPO) {
+            throw std::invalid_argument("Invalid tempo: " + std::to_string(tmp));
+        }
+        return tmp;
+    }
+    
+    static double validateGridSize(double grid) {
+        using namespace PatternConstants;
+        if (grid < MIN_GRID_SIZE || grid > MAX_GRID_SIZE) {
+            throw std::invalid_argument("Invalid grid size: " + std::to_string(grid));
+        }
+        return grid;
     }
 };
 

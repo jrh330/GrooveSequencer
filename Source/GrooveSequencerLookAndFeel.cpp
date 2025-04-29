@@ -2,9 +2,102 @@
 
 GrooveSequencerLookAndFeel::GrooveSequencerLookAndFeel()
 {
-    // Set up modernist font (using Helvetica as a base)
-    modernistFont = juce::Font("Helvetica Neue", "Regular", 16.0f);
-    setDefaultSansSerifTypefaceName("Helvetica Neue");
+    // Initialize fonts with primary and fallback options
+    regularFont = juce::Font(getPrimaryFontName(), BASE_FONT_SIZE, juce::Font::plain);
+    if (!regularFont.isAvailable())
+        regularFont = juce::Font(getFallbackFontName(), BASE_FONT_SIZE, juce::Font::plain);
+        
+    lightFont = regularFont.withStyle(juce::Font::plain);
+    lightFont.setExtraKerningFactor(0.05f);
+    
+    mediumFont = regularFont.withStyle(juce::Font::plain);
+    mediumFont.setExtraKerningFactor(-0.02f);
+    
+    boldFont = regularFont.withStyle(juce::Font::bold);
+    boldFont.setExtraKerningFactor(-0.05f);
+
+    // Set colors using our Olivetti-inspired palette
+    setColour(juce::ResizableWindow::backgroundColourId, background);
+    setColour(juce::Slider::thumbColourId, primary);
+    setColour(juce::Slider::trackColourId, secondary);
+    setColour(juce::Slider::backgroundColourId, background.darker(0.1f));
+    setColour(juce::TextButton::buttonColourId, accent1);
+    setColour(juce::TextButton::buttonOnColourId, accent2);
+    setColour(juce::TextButton::textColourOffId, background);
+    setColour(juce::TextButton::textColourOnId, primary);
+    setColour(juce::Label::textColourId, primary);
+    setColour(juce::ComboBox::backgroundColourId, background);
+    setColour(juce::ComboBox::textColourId, primary);
+    setColour(juce::ComboBox::outlineColourId, secondary);
+    
+    // New color settings for added components
+    setColour(juce::PopupMenu::backgroundColourId, background);
+    setColour(juce::PopupMenu::textColourId, primary);
+    setColour(juce::PopupMenu::highlightedBackgroundColourId, accent2);
+    setColour(juce::PopupMenu::highlightedTextColourId, primary);
+    setColour(juce::ScrollBar::backgroundColourId, background.darker(0.1f));
+    setColour(juce::ScrollBar::thumbColourId, secondary);
+    setColour(juce::ScrollBar::trackColourId, background);
+    setColour(juce::TooltipWindow::backgroundColourId, primary.withAlpha(0.9f));
+    setColour(juce::TooltipWindow::textColourId, background);
+}
+
+juce::String GrooveSequencerLookAndFeel::getPrimaryFontName() const
+{
+    // Try system fonts in order of preference
+    const juce::StringArray fontNames = {
+        "Helvetica Neue",
+        "SF Pro Text",
+        "Inter",
+        "Roboto",
+        "Arial"
+    };
+    
+    for (const auto& fontName : fontNames)
+        if (juce::Font(fontName, BASE_FONT_SIZE, juce::Font::plain).isAvailable())
+            return fontName;
+            
+    return "Helvetica Neue"; // Default to Helvetica Neue
+}
+
+juce::String GrooveSequencerLookAndFeel::getFallbackFontName() const
+{
+    return juce::Font::getDefaultSansSerifFontName();
+}
+
+juce::Font GrooveSequencerLookAndFeel::getFont(FontStyle style) const
+{
+    switch (style)
+    {
+        case FontStyle::Light:
+            return lightFont;
+        case FontStyle::Medium:
+            return mediumFont;
+        case FontStyle::Bold:
+            return boldFont;
+        case FontStyle::Title:
+            return boldFont.withHeight(TITLE_FONT_SIZE);
+        case FontStyle::Heading:
+            return mediumFont.withHeight(HEADING_FONT_SIZE);
+        case FontStyle::Body:
+            return regularFont;
+        case FontStyle::Small:
+            return regularFont.withHeight(SMALL_FONT_SIZE);
+        default:
+            return regularFont;
+    }
+}
+
+float GrooveSequencerLookAndFeel::getFontHeight(FontStyle style) const
+{
+    switch (style)
+    {
+        case FontStyle::Title:   return TITLE_FONT_SIZE;
+        case FontStyle::Heading: return HEADING_FONT_SIZE;
+        case FontStyle::Body:    return BODY_FONT_SIZE;
+        case FontStyle::Small:   return SMALL_FONT_SIZE;
+        default:                 return BASE_FONT_SIZE;
+    }
 }
 
 void GrooveSequencerLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::Button& button,
@@ -13,34 +106,27 @@ void GrooveSequencerLookAndFeel::drawButtonBackground(juce::Graphics& g, juce::B
                                                      bool shouldDrawButtonAsDown)
 {
     auto bounds = button.getLocalBounds().toFloat();
-    auto baseColour = button.getToggleState() ? mint : backgroundColour;
+    auto baseColour = button.getToggleState() ? accent2 : accent1;
     
     if (shouldDrawButtonAsDown)
         baseColour = baseColour.darker(0.2f);
     else if (shouldDrawButtonAsHighlighted)
         baseColour = baseColour.brighter(0.1f);
     
-    // Draw geometric background
-    if (button.getToggleState() || dynamic_cast<juce::TextButton*>(&button))
-    {
-        // Circular button style
-        drawModernistCircle(g, bounds, baseColour);
-    }
-    else
-    {
-        // Toggle button style - rectangular with geometric accent
-        g.setColour(baseColour);
-        g.fillRoundedRectangle(bounds, 3.0f);
-        drawGeometricAccent(g, bounds, baseColour.contrasting(0.5f));
-    }
+    g.setColour(baseColour);
+    g.fillRoundedRectangle(bounds, 4.0f);
+    
+    // Add geometric accent
+    g.setColour(primary);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
 }
 
 void GrooveSequencerLookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& button,
                                                bool shouldDrawButtonAsHighlighted,
                                                bool shouldDrawButtonAsDown)
 {
-    g.setFont(getTextButtonFont(button, button.getHeight()));
-    g.setColour(button.getToggleState() ? offWhite : black);
+    g.setFont(getFont(FontStyle::Medium).withHeight(button.getHeight() * 0.4f));
+    g.setColour(button.getToggleState() ? primary : background);
     
     auto bounds = button.getLocalBounds();
     g.drawText(button.getButtonText(), bounds, juce::Justification::centred);
@@ -50,25 +136,22 @@ void GrooveSequencerLookAndFeel::drawLinearSlider(juce::Graphics& g, int x, int 
                                                  float sliderPos, float minSliderPos, float maxSliderPos,
                                                  const juce::Slider::SliderStyle style, juce::Slider& slider)
 {
-    // Draw track
-    auto trackWidth = juce::jmin(6.0f, float(width) * 0.25f);
-    auto trackBounds = juce::Rectangle<float>(x + width * 0.5f - trackWidth * 0.5f,
-                                            y, trackWidth, height);
+    auto bounds = juce::Rectangle<float>(x, y, width, height);
+    auto trackBounds = bounds.reduced(2.0f);
     
-    g.setColour(mint.withAlpha(0.3f));
-    g.fillRoundedRectangle(trackBounds, trackWidth * 0.5f);
+    // Draw track background
+    g.setColour(background.darker(0.1f));
+    g.fillRoundedRectangle(trackBounds, 3.0f);
     
-    // Draw value track
-    auto valueTrackBounds = trackBounds.withBottom(sliderPos);
-    g.setColour(mint);
-    g.fillRoundedRectangle(valueTrackBounds, trackWidth * 0.5f);
+    // Draw filled portion
+    g.setColour(secondary);
+    auto filledBounds = trackBounds.withWidth(sliderPos - x);
+    g.fillRoundedRectangle(filledBounds, 3.0f);
     
     // Draw thumb
-    auto thumbWidth = trackWidth * 2.5f;
-    auto thumbBounds = juce::Rectangle<float>(thumbWidth, thumbWidth)
-                          .withCentre(juce::Point<float>(trackBounds.getCentreX(), sliderPos));
-    
-    drawModernistCircle(g, thumbBounds, yellow);
+    g.setColour(primary);
+    auto thumbBounds = juce::Rectangle<float>(sliderPos - 5.0f, bounds.getY(), 10.0f, bounds.getHeight());
+    g.fillRoundedRectangle(thumbBounds, 2.0f);
 }
 
 void GrooveSequencerLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
@@ -76,27 +159,30 @@ void GrooveSequencerLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int 
                                                  float rotaryEndAngle, juce::Slider& slider)
 {
     auto bounds = juce::Rectangle<float>(x, y, width, height);
-    auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.4f;
-    auto centre = bounds.getCentre();
-    auto angle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
+    auto radius = juce::jmin(bounds.getWidth(), bounds.getHeight()) / 2.0f;
+    auto toAngle = rotaryStartAngle + sliderPosProportional * (rotaryEndAngle - rotaryStartAngle);
+    auto lineWidth = radius * 0.1f;
+    auto arcRadius = radius - lineWidth * 2.0f;
     
-    // Draw outer circle
-    drawModernistCircle(g, bounds.reduced(bounds.getWidth() * 0.1f), mint.withAlpha(0.3f));
+    bounds.reduce(lineWidth, lineWidth);
     
-    // Draw value arc
-    g.setColour(mint);
-    auto path = juce::Path();
-    path.addArc(centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f,
-                rotaryStartAngle, angle, true);
-    g.strokePath(path, juce::PathStrokeType(3.0f));
+    // Draw background circle
+    g.setColour(slider.findColour(juce::Slider::backgroundColourId));
+    g.fillEllipse(bounds);
     
-    // Draw pointer
-    auto pointerLength = radius * 0.8f;
-    auto pointerThickness = 3.0f;
-    auto pointerPath = juce::Path();
-    pointerPath.addRectangle(-pointerThickness * 0.5f, -radius, pointerThickness, pointerLength);
-    g.setColour(yellow);
-    g.fillPath(pointerPath, juce::AffineTransform::rotation(angle).translated(centre.x, centre.y));
+    // Draw arc
+    g.setColour(slider.findColour(juce::Slider::trackColourId));
+    juce::Path arc;
+    arc.addCentredArc(bounds.getCentreX(), bounds.getCentreY(), arcRadius, arcRadius,
+                      0.0f, rotaryStartAngle, toAngle, true);
+    g.strokePath(arc, juce::PathStrokeType(lineWidth));
+    
+    // Draw thumb
+    juce::Path thumb;
+    auto thumbWidth = lineWidth * 2.0f;
+    thumb.addRectangle(-thumbWidth / 2, -radius + lineWidth * 2, thumbWidth, lineWidth * 4);
+    g.setColour(slider.findColour(juce::Slider::thumbColourId));
+    g.fillPath(thumb, juce::AffineTransform::rotation(toAngle).translated(bounds.getCentreX(), bounds.getCentreY()));
 }
 
 void GrooveSequencerLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height,
@@ -105,28 +191,27 @@ void GrooveSequencerLookAndFeel::drawComboBox(juce::Graphics& g, int width, int 
 {
     auto bounds = juce::Rectangle<float>(0, 0, width, height);
     
-    // Draw background
-    g.setColour(mint.withAlpha(0.1f));
-    g.fillRoundedRectangle(bounds, 3.0f);
+    g.setColour(box.findColour(juce::ComboBox::backgroundColourId));
+    g.fillRoundedRectangle(bounds, 4.0f);
     
-    // Draw border
-    g.setColour(mint);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 3.0f, 1.0f);
+    g.setColour(box.findColour(juce::ComboBox::outlineColourId));
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
     
     // Draw arrow
     auto arrowBounds = juce::Rectangle<float>(buttonX, buttonY, buttonW, buttonH);
-    auto arrowPath = juce::Path();
-    arrowPath.addTriangle(arrowBounds.getCentreX() - 3.0f, arrowBounds.getCentreY() - 2.0f,
-                         arrowBounds.getCentreX() + 3.0f, arrowBounds.getCentreY() - 2.0f,
-                         arrowBounds.getCentreX(), arrowBounds.getCentreY() + 2.0f);
-    g.setColour(box.isEnabled() ? mint : mint.withAlpha(0.3f));
-    g.fillPath(arrowPath);
+    juce::Path arrow;
+    arrow.startNewSubPath(arrowBounds.getX() + arrowBounds.getWidth() * 0.3f, arrowBounds.getCentreY() - 2.0f);
+    arrow.lineTo(arrowBounds.getCentreX(), arrowBounds.getCentreY() + 2.0f);
+    arrow.lineTo(arrowBounds.getX() + arrowBounds.getWidth() * 0.7f, arrowBounds.getCentreY() - 2.0f);
+    
+    g.setColour(box.findColour(juce::ComboBox::textColourId));
+    g.strokePath(arrow, juce::PathStrokeType(1.0f));
 }
 
 void GrooveSequencerLookAndFeel::drawLabel(juce::Graphics& g, juce::Label& label)
 {
     g.setFont(getLabelFont(label));
-    g.setColour(black);
+    g.setColour(primary);
     
     auto bounds = label.getLocalBounds();
     g.drawText(label.getText(), bounds, label.getJustificationType());
@@ -137,35 +222,43 @@ void GrooveSequencerLookAndFeel::drawToggleButton(juce::Graphics& g, juce::Toggl
                                                  bool shouldDrawButtonAsDown)
 {
     auto bounds = button.getLocalBounds().toFloat();
-    auto baseColour = button.getToggleState() ? mint : offWhite;
+    auto baseColour = button.getToggleState() ? accent2 : accent1;
     
     // Draw background
     g.setColour(baseColour);
-    g.fillRoundedRectangle(bounds, 3.0f);
+    g.fillRoundedRectangle(bounds, 4.0f);
     
     // Draw border
-    g.setColour(mint);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 3.0f, 1.0f);
+    g.setColour(primary);
+    g.drawRoundedRectangle(bounds.reduced(0.5f), 4.0f, 1.0f);
     
-    // Draw text
-    g.setFont(modernistFont);
-    g.setColour(button.getToggleState() ? offWhite : black);
+    // Draw text with medium weight font
+    g.setFont(getFont(FontStyle::Medium));
+    g.setColour(button.getToggleState() ? primary : background);
     g.drawText(button.getButtonText(), bounds, juce::Justification::centred);
 }
 
 juce::Font GrooveSequencerLookAndFeel::getTextButtonFont(juce::TextButton&, int buttonHeight)
 {
-    return modernistFont.withHeight(buttonHeight * 0.4f);
+    return getFont(FontStyle::Medium).withHeight(buttonHeight * 0.4f);
 }
 
-juce::Font GrooveSequencerLookAndFeel::getLabelFont(juce::Label&)
+juce::Font GrooveSequencerLookAndFeel::getLabelFont(juce::Label& label)
 {
-    return modernistFont;
+    // Use different styles based on label role (if needed)
+    if (label.getProperties().contains("FontStyle"))
+    {
+        const auto styleString = label.getProperties()["FontStyle"].toString();
+        if (styleString == "Title")   return getFont(FontStyle::Title);
+        if (styleString == "Heading") return getFont(FontStyle::Heading);
+        if (styleString == "Small")   return getFont(FontStyle::Small);
+    }
+    return getFont(FontStyle::Body);
 }
 
 juce::Font GrooveSequencerLookAndFeel::getComboBoxFont(juce::ComboBox&)
 {
-    return modernistFont;
+    return getFont(FontStyle::Regular);
 }
 
 void GrooveSequencerLookAndFeel::drawModernistCircle(juce::Graphics& g,
@@ -202,32 +295,154 @@ void GrooveSequencerLookAndFeel::drawGeometricAccent(juce::Graphics& g,
     g.fillPath(path);
 }
 
-juce::Colour GrooveSequencerLookAndFeel::getBackgroundColour() const
+void GrooveSequencerLookAndFeel::drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area,
+                                                  bool isSeparator, bool isActive, bool isHighlighted,
+                                                  bool isTicked, bool hasSubMenu, const juce::String& text,
+                                                  const juce::String& shortcutKeyText,
+                                                  const juce::Drawable* icon, const juce::Colour* textColour)
 {
-    return offWhite;
+    if (isSeparator)
+    {
+        auto r = area.reduced(5, 2);
+        g.setColour(primary.withAlpha(0.3f));
+        g.drawLine(r.getX(), r.getCentreY(), r.getRight(), r.getCentreY(), 1.0f);
+    }
+    else
+    {
+        auto r = area.reduced(1);
+        
+        if (isHighlighted && isActive)
+        {
+            g.setColour(accent2);
+            g.fillRect(r);
+            g.setColour(primary);
+        }
+        else
+        {
+            g.setColour(textColour != nullptr ? *textColour : findColour(juce::PopupMenu::textColourId));
+        }
+        
+        r.reduce(juce::jmin(5, area.getWidth() / 20), 0);
+        
+        auto font = getFont(FontStyle::Regular);
+        auto maxFontHeight = r.getHeight() / 1.3f;
+        
+        if (font.getHeight() > maxFontHeight)
+            font.setHeight(maxFontHeight);
+            
+        g.setFont(font);
+        
+        if (isTicked)
+        {
+            auto checkboxSize = font.getHeight();
+            auto checkboxArea = r.removeFromLeft(checkboxSize).reduced(3);
+            drawModernistCircle(g, checkboxArea.toFloat(), accent1, 1.0f);
+        }
+        
+        if (hasSubMenu)
+        {
+            auto arrowH = 0.6f * getPopupMenuFont().getAscent();
+            auto x = static_cast<float>(r.removeFromRight((int) arrowH).getX());
+            auto halfH = static_cast<float>(r.getCentreY());
+            
+            juce::Path path;
+            path.startNewSubPath(x, halfH - arrowH * 0.5f);
+            path.lineTo(x + arrowH * 0.6f, halfH);
+            path.lineTo(x, halfH + arrowH * 0.5f);
+            
+            g.strokePath(path, juce::PathStrokeType(2.0f));
+        }
+        
+        r.removeFromRight(3);
+        g.drawFittedText(text, r, juce::Justification::centredLeft, 1);
+        
+        if (shortcutKeyText.isNotEmpty())
+        {
+            auto f2 = getFont(FontStyle::Small);
+            g.setFont(f2);
+            g.drawText(shortcutKeyText, r, juce::Justification::centredRight, true);
+        }
+    }
 }
 
-juce::Colour GrooveSequencerLookAndFeel::getBackgroundAccentColour() const
+void GrooveSequencerLookAndFeel::drawPopupMenuBackground(juce::Graphics& g, int width, int height)
 {
-    return red.withAlpha(0.8f);
+    auto background = findColour(juce::PopupMenu::backgroundColourId);
+    g.fillAll(background);
+    
+    g.setColour(primary.withAlpha(0.2f));
+    g.drawRect(0, 0, width, height, 1);
+    
+    // Add subtle gradient
+    juce::ColourGradient gradient(background.brighter(0.02f), 0.0f, 0.0f,
+                                 background.darker(0.02f), 0.0f, static_cast<float>(height), false);
+    g.setGradientFill(gradient);
+    g.fillAll();
 }
 
-juce::Colour GrooveSequencerLookAndFeel::getGridCellBorderColour() const
+void GrooveSequencerLookAndFeel::drawScrollbar(juce::Graphics& g, juce::ScrollBar& scrollbar,
+                                              int x, int y, int width, int height,
+                                              bool isScrollbarVertical, int thumbStartPosition,
+                                              int thumbSize, bool isMouseOver, bool isMouseDown)
 {
-    return blue;
+    auto thumbBounds = juce::Rectangle<int>(x + (isScrollbarVertical ? 0 : thumbStartPosition),
+                                          y + (isScrollbarVertical ? thumbStartPosition : 0),
+                                          isScrollbarVertical ? width : thumbSize,
+                                          isScrollbarVertical ? thumbSize : height);
+    
+    // Draw track
+    g.setColour(findColour(juce::ScrollBar::trackColourId));
+    g.fillRoundedRectangle(x, y, width, height, 3.0f);
+    
+    // Draw thumb
+    auto thumbCol = findColour(juce::ScrollBar::thumbColourId)
+                    .withMultipliedAlpha(isMouseOver ? 1.1f : 0.9f);
+    g.setColour(thumbCol);
+    g.fillRoundedRectangle(thumbBounds.toFloat(), 3.0f);
+    
+    // Add geometric accent
+    if (isMouseOver || isMouseDown)
+    {
+        g.setColour(primary.withAlpha(0.5f));
+        auto accentBounds = thumbBounds.toFloat().reduced(2.0f);
+        if (isScrollbarVertical)
+        {
+            g.drawLine(accentBounds.getCentreX(), accentBounds.getY(),
+                      accentBounds.getCentreX(), accentBounds.getBottom(), 1.0f);
+        }
+        else
+        {
+            g.drawLine(accentBounds.getX(), accentBounds.getCentreY(),
+                      accentBounds.getRight(), accentBounds.getCentreY(), 1.0f);
+        }
+    }
 }
 
-juce::Colour GrooveSequencerLookAndFeel::getGridCellStaccatoColour() const
+void GrooveSequencerLookAndFeel::drawTooltip(juce::Graphics& g, const juce::String& text, int width, int height)
 {
-    return red;
+    auto bounds = juce::Rectangle<int>(width, height).toFloat();
+    auto cornerSize = 3.0f;
+    
+    // Draw background
+    g.setColour(findColour(juce::TooltipWindow::backgroundColourId));
+    g.fillRoundedRectangle(bounds, cornerSize);
+    
+    // Draw border
+    g.setColour(primary.withAlpha(0.5f));
+    g.drawRoundedRectangle(bounds.reduced(0.5f), cornerSize, 1.0f);
+    
+    // Draw text
+    g.setColour(findColour(juce::TooltipWindow::textColourId));
+    g.setFont(getTooltipFont());
+    g.drawText(text, bounds.reduced(4), juce::Justification::centred, true);
 }
 
-juce::Colour GrooveSequencerLookAndFeel::getPlayheadColour() const
+juce::Font GrooveSequencerLookAndFeel::getPopupMenuFont()
 {
-    return blue.withAlpha(0.5f);
+    return getFont(FontStyle::Regular);
 }
 
-juce::Colour GrooveSequencerLookAndFeel::getGridLineColour() const
+juce::Font GrooveSequencerLookAndFeel::getTooltipFont()
 {
-    return blue.withAlpha(0.3f);
+    return getFont(FontStyle::Small);
 } 

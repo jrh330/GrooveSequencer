@@ -42,6 +42,21 @@ GridSequencerComponent::GridSequencerComponent(GrooveSequencerAudioProcessor& p)
     , grid(kRows, std::vector<GridCell>(kCols))
 {
     setOpaque(true);
+    
+    // Initialize grid from processor pattern
+    const auto& pattern = processor.getPattern();
+    for (const auto& note : pattern.notes) {
+        int col = static_cast<int>(note.startTime / pattern.gridSize);
+        int row = note.pitch - 60;  // Assuming base pitch is 60 (middle C)
+        
+        if (row >= 0 && row < kRows && col >= 0 && col < kCols) {
+            grid[row][col].active = note.active;
+            grid[row][col].velocity = note.velocity;
+            grid[row][col].accent = note.accent;
+            grid[row][col].isStaccato = note.isStaccato;
+        }
+    }
+    
     startTimerHz(60);
 }
 
@@ -57,8 +72,19 @@ GrooveSequencerLookAndFeel& GridSequencerComponent::getLookAndFeelAs() const
 
 void GridSequencerComponent::paint(juce::Graphics& g)
 {
+    DBG("GridSequencerComponent::paint called");
+    DBG("Component size: " + juce::String(getWidth()) + "x" + juce::String(getHeight()));
+    
+    // Fill background
+    g.fillAll(getLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+    
+    // Draw decorative background
     drawBackground(g);
+    
+    // Draw grid
     drawGrid(g);
+    
+    // Draw playhead
     drawPlayhead(g);
 }
 
@@ -72,15 +98,22 @@ void GridSequencerComponent::drawBackground(juce::Graphics& g) const
     // Draw modernist elements
     g.setColour(lf.getBackgroundAccentColour().withAlpha(0.1f));
     
-    // Large circle
-    const float centerX = getWidth() * 0.75f;
-    const float centerY = getHeight() * 0.5f;
-    const float radius = getHeight() * 0.8f;
-    g.drawEllipse(centerX - radius, centerY - radius, radius * 2, radius * 2, 1.0f);
+    // Geometric shapes
+    const float width = getWidth();
+    const float height = getHeight();
     
-    // Diagonal lines
-    g.drawLine(0, 0, getWidth() * 0.3f, getHeight(), 1.0f);
-    g.drawLine(getWidth() * 0.7f, 0, getWidth(), getHeight() * 0.5f, 1.0f);
+    // Draw diagonal lines
+    g.drawLine(0, 0, width * 0.3f, height, 1.0f);
+    g.drawLine(width * 0.7f, 0, width, height * 0.5f, 1.0f);
+    
+    // Draw angular shapes
+    juce::Path path;
+    path.startNewSubPath(width * 0.75f, height * 0.2f);
+    path.lineTo(width * 0.85f, height * 0.3f);
+    path.lineTo(width * 0.8f, height * 0.7f);
+    path.lineTo(width * 0.7f, height * 0.6f);
+    path.closeSubPath();
+    g.strokePath(path, juce::PathStrokeType(1.0f));
 }
 
 void GridSequencerComponent::drawGrid(juce::Graphics& g) const
@@ -117,41 +150,25 @@ void GridSequencerComponent::drawCell(juce::Graphics& g, int row, int col) const
         
     const auto& cell = grid[static_cast<size_t>(row)][static_cast<size_t>(col)];
     auto& lf = getLookAndFeelAs();
-    auto bounds = getCellBounds(row, col);
+    auto bounds = getCellBounds(row, col).reduced(kCellPadding);
     
     // Draw cell background
-    g.setColour(cell.getBaseColour(lf));
-    g.fillEllipse(bounds);
+    g.setColour(cell.active ? 
+        lf.getBackgroundAccentColour().withAlpha(0.8f) : // Active cells
+        lf.getBackgroundColour().contrasting(0.1f));     // Inactive cells
+    g.fillRect(bounds);
     
-    if (cell.active) {
-        // Draw ring
-        g.setColour(cell.getRingColour(lf));
-        g.drawEllipse(bounds, kGridLineThicknessMajor);
-        
-        // Draw velocity indicator
-        if (!cell.isStaccato) {
-            const float velocityHeight = (cell.velocity / 127.0f) * bounds.getHeight() * 0.6f;
-            const float indicatorWidth = bounds.getWidth() * kVelocityIndicatorWidthRatio;
-            g.fillRect(bounds.getCentreX() - indicatorWidth * 0.5f,
-                      bounds.getCentreY() + bounds.getHeight() * 0.1f - velocityHeight,
-                      indicatorWidth,
-                      velocityHeight);
-        }
-        
-        // Draw accent dots
-        if (cell.accent > 0) {
-            const float startX = bounds.getCentreX() - ((cell.accent - 1) * kAccentDotSpacing * 0.5f);
-            const float y = bounds.getY() + bounds.getHeight() * 0.2f;
-            
-            for (int i = 0; i < cell.accent; ++i) {
-                g.fillEllipse(startX + (i * kAccentDotSpacing) - kAccentDotSize * 0.5f,
-                             y - kAccentDotSize * 0.5f,
-                             kAccentDotSize, kAccentDotSize);
-            }
-        }
-    } else {
-        g.setColour(cell.getRingColour(lf));
-        g.drawEllipse(bounds, kGridLineThicknessMinor);
+    // Draw cell border - orange if this is the current step and cell is active
+    bool isCurrentStep = (col == currentStep && processor.isPlaying());
+    g.setColour(isCurrentStep && cell.active ? 
+                juce::Colours::orange : 
+                cell.getRingColour(lf).withAlpha(0.9f));
+    g.drawRect(bounds, cell.active ? kGridLineThicknessMajor : kGridLineThicknessMinor);
+    
+    // Highlight current step with a subtle background tint
+    if (isCurrentStep) {
+        g.setColour(juce::Colours::white.withAlpha(0.1f));
+        g.fillRect(bounds);
     }
 }
 
@@ -198,57 +215,33 @@ void GridSequencerComponent::mouseUp(const juce::MouseEvent&)
     dragState = {};
 }
 
-void GridSequencerComponent::handleCellInteraction(int row, int col, const juce::ModifierKeys& mods, float dragDelta)
+void GridSequencerComponent::handleCellInteraction(int row, int col, const juce::ModifierKeys& mods, float)
 {
-    if (!isPositionValid(row, col)) {
-        juce::Logger::writeToLog("Invalid grid position: " + juce::String(row) + ", " + juce::String(col));
+    if (!isPositionValid(row, col) || processor.isPlaying())
         return;
-    }
-    
+
     auto& cell = grid[static_cast<size_t>(row)][static_cast<size_t>(col)];
-    bool shouldUpdate = false;
     
-    if (dragDelta != 0.0f && cell.active) {
-        // Update velocity based on drag
-        float newVelocity = juce::jlimit(1.0f, 127.0f, cell.velocity + dragDelta * 64.0f);
-        if (newVelocity != cell.velocity) {
-            cell.velocity = newVelocity;
-            shouldUpdate = true;
-        }
-    } else if (mods.isRightButtonDown() && cell.active) {
-        // Cycle accent
-        cell.accent = (cell.accent + 1) % 3;
-        shouldUpdate = true;
-    } else if (mods.isAltDown() && cell.active) {
-        // Toggle staccato
+    // Toggle cell state
+    if (mods.isShiftDown()) {
         cell.isStaccato = !cell.isStaccato;
-        shouldUpdate = true;
+    } else if (mods.isAltDown()) {
+        cell.accent = (cell.accent + 1) % 3;  // Cycle through accent levels
     } else {
-        // Toggle active state
-        bool wasActive = cell.active;
-        cell.updateState(!cell.active, 
-                        cell.active ? cell.velocity : 100.0f,
-                        cell.active ? cell.accent : 0,
-                        cell.active ? cell.isStaccato : false);
-        shouldUpdate = (wasActive != cell.active);
+        cell.active = !cell.active;
     }
     
-    if (shouldUpdate) {
-        const juce::ScopedLock sl(processor.getCallbackLock());
-        processor.updateGridCell(row, col, cell.active, cell.velocity, cell.accent, cell.isStaccato);
-        repaint();
-    }
+    // Update processor pattern - use global velocity from processor
+    processor.updateGridCell(row, col, cell.active, processor.getVelocityScale() * 127.0f, cell.accent, cell.isStaccato);
+    repaint();
 }
 
 void GridSequencerComponent::timerCallback()
 {
     const juce::ScopedLock sl(processor.getCallbackLock());
     if (processor.isPlaying()) {
-        const int newStep = processor.getCurrentStep();
-        if (newStep != currentStep && newStep >= 0 && newStep < kCols) {
-            currentStep = newStep;
-            repaint();
-        }
+        currentStep = processor.getCurrentStep();
+        repaint();
     }
 }
 
@@ -280,5 +273,40 @@ bool GridSequencerComponent::isPositionValid(int row, int col) const
 
 void GridSequencerComponent::resized()
 {
+    // Update grid cell sizes
     repaint();
+}
+
+void GridSequencerComponent::updateGridSize(int newSize)
+{
+    if (newSize != gridSize && newSize > 0)
+    {
+        gridSize = newSize;
+        grid.resize(kRows);
+        for (auto& row : grid)
+        {
+            row.resize(gridSize);
+        }
+        repaint();
+    }
+}
+
+void GridSequencerComponent::setBasePitch(int midiNote)
+{
+    if (midiNote >= 0 && midiNote < 128)
+    {
+        basePitch = midiNote;
+        // Update all cells in the grid to use the new base pitch
+        for (int row = 0; row < kRows; ++row)
+        {
+            for (int col = 0; col < gridSize; ++col)
+            {
+                if (grid[row][col].active)
+                {
+                    processor.updateGridCell(row, col, true, grid[row][col].velocity / 127.0f,
+                                          grid[row][col].accent, grid[row][col].isStaccato);
+                }
+            }
+        }
+    }
 } 
